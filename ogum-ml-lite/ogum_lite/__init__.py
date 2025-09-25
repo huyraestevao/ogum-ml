@@ -2,7 +2,10 @@
 
 from .features import (
     aggregate_timeseries,
+    arrhenius_feature_table,
+    build_feature_store,
     build_feature_table,
+    build_stage_feature_tables,
     finite_diff,
     theta_features,
 )
@@ -25,7 +28,10 @@ __all__ = [
     "OgumLite",
     "R_GAS_CONSTANT",
     "aggregate_timeseries",
+    "arrhenius_feature_table",
     "build_feature_table",
+    "build_feature_store",
+    "build_stage_feature_tables",
     "build_master_curve",
     "finite_diff",
     "kmeans_explore",

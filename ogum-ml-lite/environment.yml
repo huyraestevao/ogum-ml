@@ -10,6 +10,8 @@ dependencies:
   - matplotlib
   - joblib
   - gradio
+  - openpyxl
+  - xlrd
   - ruff
   - black
   - pytest

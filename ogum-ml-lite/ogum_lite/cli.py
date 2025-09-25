@@ -3,22 +3,35 @@
 from __future__ import annotations
 
 import argparse
+import json
 import tempfile
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable, List
 
 import gradio as gr
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
-from .features import build_feature_table
+from .arrhenius import arrhenius_lnT_dy_dt_vs_invT, fit_arrhenius_global
+from .features import arrhenius_feature_table, build_feature_store, build_feature_table
+from .io_mapping import (
+    TECHNIQUE_CHOICES,
+    ColumnMap,
+    apply_mapping,
+    infer_mapping,
+    read_table,
+)
 from .ml_hooks import (
     kmeans_explore,
     predict_from_artifact,
     train_classifier,
     train_regressor,
 )
+from .preprocess import derive_all
+from .stages import DEFAULT_STAGES
 from .theta_msc import OgumLite, score_activation_energies
 
 
@@ -33,7 +46,101 @@ def parse_ea_list(raw: str) -> List[float]:
         ) from exc
 
 
+def parse_stage_ranges(raw: str | None) -> list[tuple[float, float]]:
+    """Parse densification ranges like ``0.55-0.70,0.70-0.90``."""
+
+    if raw is None or not raw.strip():
+        return list(DEFAULT_STAGES)
+
+    ranges: list[tuple[float, float]] = []
+    for chunk in raw.split(","):
+        piece = chunk.strip()
+        if not piece:
+            continue
+        if "-" not in piece:
+            raise argparse.ArgumentTypeError(
+                f"Invalid stage definition '{piece}'. Expected format 'lower-upper'."
+            )
+        lower_str, upper_str = piece.split("-", 1)
+        try:
+            lower = float(lower_str)
+            upper = float(upper_str)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise argparse.ArgumentTypeError(
+                f"Stage bounds must be numeric: '{piece}'"
+            ) from exc
+        if upper <= lower:
+            raise argparse.ArgumentTypeError(
+                f"Stage upper bound must exceed lower bound: '{piece}'"
+            )
+        ranges.append((lower, upper))
+
+    if not ranges:
+        return list(DEFAULT_STAGES)
+    return ranges
+
+
+def _mapping_from_json(path: Path) -> ColumnMap:
+    data = json.loads(Path(path).read_text())
+    return ColumnMap(**data)
+
+
+def _edit_mapping(mapping: ColumnMap, df: pd.DataFrame) -> ColumnMap:
+    current = asdict(mapping)
+    columns = [str(col) for col in df.columns]
+
+    print("\nDetected mapping:")
+    for key, value in current.items():
+        print(f"  {key}: {value}")
+
+    print("\nEnter adjustments as field=value. Press ENTER to keep current mapping.")
+    print("Available columns:")
+    print("  " + ", ".join(columns))
+    print("Technique options: " + ", ".join(TECHNIQUE_CHOICES))
+
+    while True:
+        try:
+            line = input("mapping> ").strip()
+        except EOFError:  # pragma: no cover - interactive safeguard
+            break
+        if not line:
+            break
+        if "=" not in line:
+            print("Please use the format field=value")
+            continue
+        field, value = [item.strip() for item in line.split("=", 1)]
+        if field not in current:
+            print(f"Unknown field '{field}'. Valid keys: {', '.join(current)}")
+            continue
+        if field == "time_unit":
+            if value not in {"s", "min"}:
+                print("time_unit must be 's' or 'min'")
+                continue
+        elif field == "temp_unit":
+            if value not in {"C", "K"}:
+                print("temp_unit must be 'C' or 'K'")
+                continue
+        elif field == "technique":
+            if value not in TECHNIQUE_CHOICES and value not in columns:
+                print(
+                    "Technique must be a column name or one of the predefined choices"
+                )
+                continue
+        elif value not in columns:
+            print(f"Value '{value}' not found among dataframe columns")
+            continue
+        current[field] = value
+
+    return ColumnMap(**current)
+
+
 def cmd_features(args: argparse.Namespace) -> None:
+    required = ["input", "ea"]
+    missing = [name for name in required if getattr(args, name) is None]
+    if missing:
+        missing_opts = ", ".join(f"--{name.replace('_', '-')}" for name in missing)
+        raise SystemExit(f"Missing required options: {missing_opts}")
+
     dataframe = pd.read_csv(args.input)
     features_df = build_feature_table(
         dataframe,
@@ -53,8 +160,121 @@ def cmd_features(args: argparse.Namespace) -> None:
         print(features_df.to_string(index=False))
 
 
+def cmd_features_build(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.input)
+    stages = parse_stage_ranges(args.stages)
+    theta_ea = parse_ea_list(args.theta_ea) if args.theta_ea else None
+    if theta_ea is not None and not theta_ea:
+        theta_ea = None
+
+    feature_store = build_feature_store(
+        df,
+        stages=stages,
+        group_col=args.group_col,
+        t_col=args.time_column,
+        T_col=args.temperature_column,
+        y_col=args.y_column,
+        smooth=args.smooth,
+        window=args.window,
+        poly=args.poly,
+        moving_k=args.moving_k,
+        theta_ea_kj=theta_ea,
+    )
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    feature_store.to_csv(output_path, index=False)
+    print(f"Feature store saved to {output_path}")
+    if args.print:
+        print(feature_store.to_string(index=False))
+
+
 def cmd_ml_features(args: argparse.Namespace) -> None:
     cmd_features(args)
+
+
+def cmd_io_map(args: argparse.Namespace) -> None:
+    df = read_table(str(args.input))
+    mapping = infer_mapping(df)
+    if args.edit:
+        mapping = _edit_mapping(mapping, df)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(asdict(mapping), indent=2))
+    print(f"Column mapping saved to {args.out}")
+
+
+def cmd_preprocess_derive(args: argparse.Namespace) -> None:
+    df = read_table(str(args.input))
+    mapping = _mapping_from_json(args.map)
+    mapped = apply_mapping(df, mapping)
+    derived = derive_all(
+        mapped,
+        smooth=args.smooth,
+        window=args.window,
+        poly=args.poly,
+        moving_k=args.moving_k,
+    )
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    derived.to_csv(args.out, index=False)
+    print(f"Derived table saved to {args.out}")
+    if args.print:
+        print(derived.head().to_string(index=False))
+
+
+def cmd_arrhenius_fit(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.input)
+    stages = parse_stage_ranges(args.stages)
+
+    if "dy_dt" not in df.columns:
+        df = derive_all(
+            df,
+            t_col=args.time_column,
+            T_col=args.temperature_column,
+            y_col=args.y_column,
+            smooth=args.smooth,
+            window=args.window,
+            poly=args.poly,
+            moving_k=args.moving_k,
+        )
+
+    arrhenius_table = arrhenius_feature_table(
+        df,
+        stages=stages,
+        group_col=args.group_col,
+        t_col=args.time_column,
+        T_col=args.temperature_column,
+        y_col=args.y_column,
+        smooth=args.smooth,
+        window=args.window,
+        poly=args.poly,
+        moving_k=args.moving_k,
+    )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    arrhenius_table.to_csv(args.out, index=False)
+    print(arrhenius_table.to_string(index=False))
+
+    if args.png:
+        prepared = arrhenius_lnT_dy_dt_vs_invT(
+            df,
+            T_col=args.temperature_column,
+            dy_dt_col="dy_dt",
+        )
+        result = fit_arrhenius_global(prepared)
+        fig, ax = plt.subplots()
+        ax.scatter(prepared["invT_K"], prepared["ln_T_dy_dt"], s=10, alpha=0.6)
+        x_grid = np.linspace(prepared["invT_K"].min(), prepared["invT_K"].max(), 200)
+        y_grid = result.slope * x_grid + result.intercept
+        ax.plot(x_grid, y_grid, color="red", linewidth=2.0, label="Global fit")
+        ax.set_xlabel("1/T (1/K)")
+        ax.set_ylabel("ln(T·dy/dt)")
+        ax.legend(loc="best")
+        ax.grid(True, alpha=0.3)
+        args.png.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(args.png, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Arrhenius plot saved to {args.png}")
 
 
 def _print_cv_metrics(cv_metrics: dict[str, float]) -> None:
@@ -202,9 +422,162 @@ def cmd_msc(args: argparse.Namespace) -> None:
 
 
 def launch_ui() -> None:
-    """Launch a minimalist Gradio UI for θ(Ea) and MSC exploration."""
+    """Launch a Gradio UI covering mapping, derivatives, Arrhenius and MSC."""
 
-    def process(
+    def _to_temp_csv(df: pd.DataFrame, prefix: str) -> str:
+        tmpdir = Path(tempfile.mkdtemp(prefix="ogum_ml_ui_"))
+        path = tmpdir / f"{prefix}.csv"
+        df.to_csv(path, index=False)
+        return str(path)
+
+    def load_file(
+        file: gr.File | None,
+    ) -> tuple[
+        gr.Dataframe | None,
+        pd.DataFrame | None,
+        gr.Dropdown,
+        gr.Dropdown,
+        gr.Dropdown,
+        gr.Dropdown,
+        gr.Dropdown,
+        gr.Dropdown,
+        gr.Radio,
+        gr.Radio,
+    ]:
+        if file is None:
+            empty_update = gr.Dropdown.update(choices=[], value=None)
+            radio_update = gr.Radio.update(value="s")
+            return (
+                gr.Dataframe.update(value=None),
+                None,
+                empty_update,
+                empty_update,
+                empty_update,
+                empty_update,
+                empty_update,
+                gr.Dropdown.update(
+                    choices=TECHNIQUE_CHOICES, value=TECHNIQUE_CHOICES[0]
+                ),
+                radio_update,
+                gr.Radio.update(value="C"),
+            )
+
+        dataframe = read_table(file.name)
+        mapping = infer_mapping(dataframe)
+        columns = [str(col) for col in dataframe.columns]
+        technique_choices = columns + TECHNIQUE_CHOICES
+
+        return (
+            gr.Dataframe.update(value=dataframe.head(10)),
+            dataframe,
+            gr.Dropdown.update(choices=columns, value=mapping.sample_id),
+            gr.Dropdown.update(choices=columns, value=mapping.time_col),
+            gr.Dropdown.update(choices=columns, value=mapping.temp_col),
+            gr.Dropdown.update(choices=columns, value=mapping.y_col),
+            gr.Dropdown.update(choices=columns, value=mapping.composition),
+            gr.Dropdown.update(choices=technique_choices, value=mapping.technique),
+            gr.Radio.update(value=mapping.time_unit),
+            gr.Radio.update(value=mapping.temp_unit),
+        )
+
+    def derive_callback(
+        dataframe: pd.DataFrame | None,
+        sample_col: str,
+        time_col: str,
+        temp_col: str,
+        y_col: str,
+        composition_col: str,
+        technique_value: str,
+        time_unit: str,
+        temp_unit: str,
+        smooth: str,
+        window: float,
+        poly: float,
+        moving_k: float,
+    ) -> tuple[gr.Dataframe | None, pd.DataFrame | None, gr.File]:
+        if dataframe is None:
+            return gr.Dataframe.update(value=None), None, gr.File.update(value=None)
+
+        mapping = ColumnMap(
+            sample_id=sample_col,
+            time_col=time_col,
+            temp_col=temp_col,
+            y_col=y_col,
+            composition=composition_col,
+            technique=technique_value,
+            time_unit=time_unit,  # type: ignore[arg-type]
+            temp_unit=temp_unit,  # type: ignore[arg-type]
+        )
+        mapped = apply_mapping(dataframe, mapping)
+        derived = derive_all(
+            mapped,
+            smooth=smooth,
+            window=int(window),
+            poly=int(poly),
+            moving_k=int(moving_k),
+        )
+        csv_path = _to_temp_csv(derived, "derivatives")
+        return (
+            gr.Dataframe.update(value=derived.head(15)),
+            derived,
+            gr.File.update(value=csv_path),
+        )
+
+    def arrhenius_callback(
+        derived: pd.DataFrame | None,
+        stages_text: str,
+    ) -> tuple[gr.Dataframe | None, gr.File, plt.Figure | None]:
+        if derived is None:
+            return gr.Dataframe.update(value=None), gr.File.update(value=None), None
+
+        stages = parse_stage_ranges(stages_text)
+        arrhenius_table = arrhenius_feature_table(derived, stages=stages)
+        csv_path = _to_temp_csv(arrhenius_table, "arrhenius")
+
+        figure: plt.Figure | None = None
+        try:
+            prepared = arrhenius_lnT_dy_dt_vs_invT(derived)
+            fit = fit_arrhenius_global(prepared)
+            fig, ax = plt.subplots()
+            ax.scatter(prepared["invT_K"], prepared["ln_T_dy_dt"], s=12, alpha=0.6)
+            x_grid = np.linspace(
+                prepared["invT_K"].min(), prepared["invT_K"].max(), 200
+            )
+            y_grid = fit.slope * x_grid + fit.intercept
+            ax.plot(x_grid, y_grid, color="red", linewidth=2.0, label="Global fit")
+            ax.set_xlabel("1/T (1/K)")
+            ax.set_ylabel("ln(T·dy/dt)")
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+            figure = fig
+        except ValueError:
+            figure = None
+
+        return (
+            gr.Dataframe.update(value=arrhenius_table),
+            gr.File.update(value=csv_path),
+            figure,
+        )
+
+    def features_callback(
+        derived: pd.DataFrame | None,
+        stages_text: str,
+        theta_text: str,
+    ) -> tuple[gr.Dataframe | None, gr.File]:
+        if derived is None:
+            return gr.Dataframe.update(value=None), gr.File.update(value=None)
+
+        stages = parse_stage_ranges(stages_text)
+        theta_values = parse_ea_list(theta_text) if theta_text else None
+        feature_store = build_feature_store(
+            derived,
+            stages=stages,
+            theta_ea_kj=theta_values,
+        )
+        csv_path = _to_temp_csv(feature_store, "feature_store")
+        return gr.Dataframe.update(value=feature_store), gr.File.update(value=csv_path)
+
+    def msc_process(
         file: gr.File,
         t_min: float | None,
         t_max: float | None,
@@ -251,32 +624,150 @@ def launch_ui() -> None:
         )
 
     with gr.Blocks() as demo:
-        gr.Markdown("## Ogum ML Lite – θ(Ea) & MSC")
+        gr.Markdown("## Ogum ML Lite – Pipeline & MSC")
 
-        file_input = gr.File(label="Ensaios CSV (long format)")
-        with gr.Row():
-            t_min = gr.Number(label="t_min (s)", value=None)
-            t_max = gr.Number(label="t_max (s)", value=None)
-            shift = gr.Number(label="shift", value=0.0)
-            scale = gr.Number(label="scale", value=1.0)
-        ea_box = gr.Textbox(label="Ea list (kJ/mol)", value="200,300,400")
-        metric_radio = gr.Radio(
-            label="Métrica de colapso",
-            choices=["segmented", "global"],
-            value="segmented",
-        )
+        raw_state = gr.State()
+        derived_state = gr.State()
 
-        process_button = gr.Button("Calcular MSC")
-        summary_df = gr.Dataframe(label="Resumo θ(Ea)")
-        summary_file = gr.File(label="best_ea_mse.csv")
-        curve_file = gr.File(label="msc_curve.csv")
-        theta_zip = gr.File(label="theta_curves.zip")
+        with gr.Tab("Pipeline"):
+            file_input = gr.File(label="Planilha (.csv/.xlsx)")
+            preview = gr.Dataframe(label="Pré-visualização", interactive=False)
 
-        process_button.click(
-            process,
-            inputs=[file_input, t_min, t_max, shift, scale, ea_box, metric_radio],
-            outputs=[summary_df, summary_file, curve_file, theta_zip],
-        )
+            with gr.Row():
+                sample_dd = gr.Dropdown(label="sample_id")
+                time_dd = gr.Dropdown(label="time")
+                temp_dd = gr.Dropdown(label="temperature")
+                y_dd = gr.Dropdown(label="response")
+            with gr.Row():
+                comp_dd = gr.Dropdown(label="composition")
+                technique_dd = gr.Dropdown(label="technique", choices=TECHNIQUE_CHOICES)
+                time_unit_radio = gr.Radio(
+                    label="Unidade de tempo",
+                    choices=["s", "min"],
+                    value="s",
+                    interactive=True,
+                )
+                temp_unit_radio = gr.Radio(
+                    label="Unidade de temperatura",
+                    choices=["C", "K"],
+                    value="C",
+                    interactive=True,
+                )
+
+            smooth_radio = gr.Radio(
+                label="Suavização",
+                choices=["savgol", "moving", "none"],
+                value="savgol",
+            )
+            window_slider = gr.Slider(5, 51, step=2, value=11, label="Janela")
+            poly_slider = gr.Slider(1, 5, step=1, value=3, label="Ordem polinômio")
+            moving_slider = gr.Slider(
+                3, 25, step=2, value=5, label="Janela média móvel"
+            )
+            stages_text = gr.Textbox(
+                label="Estágios",
+                value="0.55-0.70,0.70-0.90",
+            )
+            theta_text = gr.Textbox(
+                label="Ea para θ(Ea) (opcional)",
+                value="",
+            )
+
+            derive_button = gr.Button("Gerar derivadas")
+            derived_preview = gr.Dataframe(label="Derivadas", interactive=False)
+            derived_file = gr.File(label="derivatives.csv")
+
+            arrhenius_button = gr.Button("Arrhenius fit")
+            arrhenius_df = gr.Dataframe(label="Arrhenius", interactive=False)
+            arrhenius_file = gr.File(label="arrhenius.csv")
+            arrhenius_plot = gr.Plot(label="ln(T·dy/dt) vs 1/T")
+
+            features_button = gr.Button("Feature store")
+            features_df = gr.Dataframe(label="Feature store", interactive=False)
+            features_file = gr.File(label="feature_store.csv")
+
+            file_input.change(
+                load_file,
+                inputs=file_input,
+                outputs=[
+                    preview,
+                    raw_state,
+                    sample_dd,
+                    time_dd,
+                    temp_dd,
+                    y_dd,
+                    comp_dd,
+                    technique_dd,
+                    time_unit_radio,
+                    temp_unit_radio,
+                ],
+            )
+
+            derive_button.click(
+                derive_callback,
+                inputs=[
+                    raw_state,
+                    sample_dd,
+                    time_dd,
+                    temp_dd,
+                    y_dd,
+                    comp_dd,
+                    technique_dd,
+                    time_unit_radio,
+                    temp_unit_radio,
+                    smooth_radio,
+                    window_slider,
+                    poly_slider,
+                    moving_slider,
+                ],
+                outputs=[derived_preview, derived_state, derived_file],
+            )
+
+            arrhenius_button.click(
+                arrhenius_callback,
+                inputs=[derived_state, stages_text],
+                outputs=[arrhenius_df, arrhenius_file, arrhenius_plot],
+            )
+
+            features_button.click(
+                features_callback,
+                inputs=[derived_state, stages_text, theta_text],
+                outputs=[features_df, features_file],
+            )
+
+        with gr.Tab("MSC"):
+            file_input_msc = gr.File(label="Ensaios CSV (long format)")
+            with gr.Row():
+                t_min = gr.Number(label="t_min (s)", value=None)
+                t_max = gr.Number(label="t_max (s)", value=None)
+                shift = gr.Number(label="shift", value=0.0)
+                scale = gr.Number(label="scale", value=1.0)
+            ea_box = gr.Textbox(label="Ea list (kJ/mol)", value="200,300,400")
+            metric_radio = gr.Radio(
+                label="Métrica de colapso",
+                choices=["segmented", "global"],
+                value="segmented",
+            )
+
+            process_button = gr.Button("Calcular MSC")
+            summary_df = gr.Dataframe(label="Resumo θ(Ea)")
+            summary_file = gr.File(label="best_ea_mse.csv")
+            curve_file = gr.File(label="msc_curve.csv")
+            theta_zip = gr.File(label="theta_curves.zip")
+
+            process_button.click(
+                msc_process,
+                inputs=[
+                    file_input_msc,
+                    t_min,
+                    t_max,
+                    shift,
+                    scale,
+                    ea_box,
+                    metric_radio,
+                ],
+                outputs=[summary_df, summary_file, curve_file, theta_zip],
+            )
 
     demo.launch()
 
@@ -289,13 +780,163 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ogum ML Lite CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    parser_io = subparsers.add_parser("io", help="I/O utilities")
+    io_subparsers = parser_io.add_subparsers(dest="io_command", required=True)
+    parser_io_map = io_subparsers.add_parser(
+        "map", help="Infer column mapping from spreadsheets"
+    )
+    parser_io_map.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="Arquivo .csv/.xls/.xlsx com dados brutos.",
+    )
+    parser_io_map.add_argument(
+        "--out",
+        type=Path,
+        default=Path("column_mapping.json"),
+        help="Arquivo JSON onde o mapeamento será salvo.",
+    )
+    parser_io_map.add_argument(
+        "--edit",
+        action="store_true",
+        help="Permite ajustar o mapeamento inferido manualmente.",
+    )
+    parser_io_map.set_defaults(func=cmd_io_map)
+
+    parser_pre = subparsers.add_parser("preprocess", help="Pre-processing helpers")
+    pre_subparsers = parser_pre.add_subparsers(dest="preprocess_command", required=True)
+    parser_pre_derive = pre_subparsers.add_parser(
+        "derive", help="Aplicar mapeamento e calcular derivadas"
+    )
+    parser_pre_derive.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="Arquivo .csv/.xls/.xlsx com dados brutos.",
+    )
+    parser_pre_derive.add_argument(
+        "--map",
+        type=Path,
+        required=True,
+        help="Arquivo JSON com o mapeamento de colunas.",
+    )
+    parser_pre_derive.add_argument(
+        "--smooth",
+        choices=["savgol", "moving", "none"],
+        default="savgol",
+        help="Método de suavização aplicado antes das derivadas.",
+    )
+    parser_pre_derive.add_argument(
+        "--window",
+        type=int,
+        default=11,
+        help="Janela do filtro de suavização.",
+    )
+    parser_pre_derive.add_argument(
+        "--poly",
+        type=int,
+        default=3,
+        help="Ordem do polinômio no Savitzky-Golay.",
+    )
+    parser_pre_derive.add_argument(
+        "--moving-k",
+        type=int,
+        default=5,
+        help="Tamanho da janela para média móvel.",
+    )
+    parser_pre_derive.add_argument(
+        "--out",
+        type=Path,
+        default=Path("derivatives.csv"),
+        help="Arquivo CSV com as derivadas normalizadas.",
+    )
+    parser_pre_derive.add_argument(
+        "--print",
+        action="store_true",
+        help="Imprime as primeiras linhas da tabela derivada.",
+    )
+    parser_pre_derive.set_defaults(func=cmd_preprocess_derive)
+
+    parser_arr = subparsers.add_parser("arrhenius", help="Arrhenius regressions")
+    arr_subparsers = parser_arr.add_subparsers(dest="arrhenius_command", required=True)
+    parser_arr_fit = arr_subparsers.add_parser(
+        "fit", help="Ajustar Ea global e por estágios"
+    )
+    parser_arr_fit.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="CSV com colunas sample_id,time_s,temp_C,y e derivadas.",
+    )
+    parser_arr_fit.add_argument(
+        "--out",
+        type=Path,
+        default=Path("arrhenius.csv"),
+        help="Arquivo CSV com os resultados de Arrhenius.",
+    )
+    parser_arr_fit.add_argument(
+        "--png",
+        type=Path,
+        help="Figura opcional ln(T·dy/dt) vs 1/T.",
+    )
+    parser_arr_fit.add_argument(
+        "--stages",
+        default=None,
+        help="Faixas de densificação (ex.: '0.55-0.70,0.70-0.90').",
+    )
+    parser_arr_fit.add_argument(
+        "--group-col",
+        default="sample_id",
+        help="Coluna de identificação da amostra.",
+    )
+    parser_arr_fit.add_argument(
+        "--time-column",
+        default="time_s",
+        help="Nome da coluna de tempo (s).",
+    )
+    parser_arr_fit.add_argument(
+        "--temperature-column",
+        default="temp_C",
+        help="Nome da coluna de temperatura (°C).",
+    )
+    parser_arr_fit.add_argument(
+        "--y-column",
+        default="y",
+        help="Coluna de densificação/response normalizada.",
+    )
+    parser_arr_fit.add_argument(
+        "--smooth",
+        choices=["savgol", "moving", "none"],
+        default="savgol",
+        help="Método de suavização usado caso seja necessário recalcular.",
+    )
+    parser_arr_fit.add_argument(
+        "--window",
+        type=int,
+        default=11,
+        help="Janela do filtro de suavização.",
+    )
+    parser_arr_fit.add_argument(
+        "--poly",
+        type=int,
+        default=3,
+        help="Ordem do polinômio no Savitzky-Golay.",
+    )
+    parser_arr_fit.add_argument(
+        "--moving-k",
+        type=int,
+        default=5,
+        help="Tamanho da janela da média móvel.",
+    )
+    parser_arr_fit.set_defaults(func=cmd_arrhenius_fit)
+
     parser_features = subparsers.add_parser(
-        "features", help="Compute per-sample feature tables"
+        "features", help="Utilitários de feature engineering"
     )
     parser_features.add_argument(
         "--input",
         type=Path,
-        required=True,
         help="CSV longo com colunas sample_id,time_s,temp_C,rho_rel.",
     )
     parser_features.add_argument(
@@ -307,7 +948,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser_features.add_argument(
         "--ea",
         type=parse_ea_list,
-        required=True,
         help="Lista de Ea em kJ/mol (ex.: '200,300,400').",
     )
     parser_features.add_argument(
@@ -335,7 +975,83 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Imprime a tabela resultante no stdout.",
     )
-    parser_features.set_defaults(func=cmd_features)
+    parser_features.set_defaults(func=cmd_features, features_command="legacy")
+
+    features_subparsers = parser_features.add_subparsers(dest="features_command")
+    parser_features_build = features_subparsers.add_parser(
+        "build", help="Montar feature store stage-aware"
+    )
+    parser_features_build.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="CSV com colunas sample_id,time_s,temp_C,y e derivadas.",
+    )
+    parser_features_build.add_argument(
+        "--output",
+        type=Path,
+        default=Path("feature_store.csv"),
+        help="Arquivo CSV consolidado.",
+    )
+    parser_features_build.add_argument(
+        "--stages",
+        default=None,
+        help="Faixas de densificação (ex.: '0.55-0.70,0.70-0.90').",
+    )
+    parser_features_build.add_argument(
+        "--group-col",
+        default="sample_id",
+        help="Coluna de identificação da amostra.",
+    )
+    parser_features_build.add_argument(
+        "--time-column",
+        default="time_s",
+        help="Coluna de tempo em segundos.",
+    )
+    parser_features_build.add_argument(
+        "--temperature-column",
+        default="temp_C",
+        help="Coluna de temperatura em °C.",
+    )
+    parser_features_build.add_argument(
+        "--y-column",
+        default="y",
+        help="Coluna de densificação normalizada.",
+    )
+    parser_features_build.add_argument(
+        "--smooth",
+        choices=["savgol", "moving", "none"],
+        default="savgol",
+        help="Método de suavização ao recalcular derivadas.",
+    )
+    parser_features_build.add_argument(
+        "--window",
+        type=int,
+        default=11,
+        help="Janela do filtro de suavização.",
+    )
+    parser_features_build.add_argument(
+        "--poly",
+        type=int,
+        default=3,
+        help="Ordem do polinômio no Savitzky-Golay.",
+    )
+    parser_features_build.add_argument(
+        "--moving-k",
+        type=int,
+        default=5,
+        help="Tamanho da janela da média móvel.",
+    )
+    parser_features_build.add_argument(
+        "--theta-ea",
+        help="Ea adicionais para integrar θ(Ea) (ex.: '200,300').",
+    )
+    parser_features_build.add_argument(
+        "--print",
+        action="store_true",
+        help="Mostra a tabela completa no stdout.",
+    )
+    parser_features_build.set_defaults(func=cmd_features_build)
 
     parser_ml = subparsers.add_parser("ml", help="ML utilities")
     ml_subparsers = parser_ml.add_subparsers(dest="ml_command", required=True)
