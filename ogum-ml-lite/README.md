@@ -75,6 +75,64 @@ O comando `msc` imprime a tabela de métricas (`mse_global`, `mse_segmented`,
 `mse_0.55_0.70`, `mse_0.70_0.90`), destaca o melhor Ea e exporta a curva mestra
 normalizada.
 
+## ML (Fase 3)
+
+Os comandos abaixo fecham o ciclo dados → features → ML com validação
+estratificada por `sample_id` (GroupKFold) e artefatos persistidos em disco.
+
+```bash
+# 1) Gerar tabela de features (mesma assinatura do comando base)
+python -m ogum_lite.cli ml features \
+  --input data/ensaios_long.csv \
+  --ea "200,300,400" \
+  --output exports/features.csv
+
+# 2) Treinar classificador (ex.: técnica de sinterização)
+python -m ogum_lite.cli ml train-cls \
+  --table exports/features.csv \
+  --target technique \
+  --group-col sample_id \
+  --features heating_rate_med_C_per_s T_max_C y_final t_to_90pct_s theta_Ea_200kJ theta_Ea_300kJ \
+  --outdir artifacts/cls_technique
+
+# 3) Treinar regressor (ex.: T90_C)
+python -m ogum_lite.cli ml train-reg \
+  --table exports/features.csv \
+  --target T90_C \
+  --group-col sample_id \
+  --features heating_rate_med_C_per_s T_max_C theta_Ea_300kJ theta_Ea_400kJ \
+  --outdir artifacts/reg_T90
+
+# 4) Predizer a partir de um artefato salvo
+python -m ogum_lite.cli ml predict \
+  --table exports/features.csv \
+  --model artifacts/cls_technique/classifier.joblib \
+  --out exports/preds_cls.csv
+
+# 5) Clusterização exploratória (KMeans)
+python -m ogum_lite.cli ml cluster \
+  --table exports/features.csv \
+  --features heating_rate_med_C_per_s T_max_C theta_Ea_300kJ \
+  --k 3 \
+  --out exports/clusters.csv
+```
+
+Durante o treino são impressas as métricas médias/desvio obtidas via
+`GroupKFold`, garantindo que nenhuma amostra (`sample_id`) aparece em múltiplos
+folds. Os artefatos exportados incluem `.joblib`, `feature_cols.json`,
+`target.json` e `model_card.json` com timestamp, hiperparâmetros e métricas.
+
+Targets canônicos compatíveis com Ogum 6.4:
+
+| Tarefa           | Coluna alvo            |
+|------------------|------------------------|
+| Classificação    | `technique` (Conventional, UHS, FS, SPS, …) |
+| Regressão        | `T90_C`, `rho_final`, `Ea_app_kJmol`        |
+
+As features geradas automaticamente incluem `heating_rate_med_C_per_s`,
+`T_max_C`, `y_final`, `t_to_90pct_s`, `dy_dt_max`, `T_at_dy_dt_max_C` e as
+colunas `theta_Ea_*` para cada Ea informado.
+
 ## Fluxo em Colab
 
 1. Abra o notebook de exemplo clicando no badge **Open In Colab** acima.
@@ -108,14 +166,16 @@ CI via GitHub Actions executa o mesmo pipeline de lint e testes.
 
 ```
 ogum_lite/
-  cli.py          # CLI com subcomandos features, theta, msc, ui
+  cli.py          # CLI com subcomandos features, theta, msc, ui e ml/*
   features.py     # Engenharia de atributos por amostra
+  ml_hooks.py     # Pipelines sklearn (classificação, regressão, cluster)
   theta_msc.py    # θ(Ea), Master Sintering Curve e métricas robustas
-  ml_hooks.py     # Stubs para integração futura com pipelines de ML
+artifacts/        # Diretório sugerido para modelos e relatórios de ML
 notebooks/
-  ogum_ml_demo.ipynb  # Fluxo mínimo em Colab com CLI embutida
+  ogum_ml_demo.ipynb       # Fluxo mínimo θ(Ea)/MSC em Colab
+  ogum_ml_ml_demo.ipynb    # Exemplo end-to-end de ML (Fase 3)
 tests/
-  test_smoke.py, test_features.py, test_msc.py
+  test_features.py, test_msc.py, test_ml_pipeline.py, test_smoke.py
 ```
 
 ## Roadmap (ml_hooks)

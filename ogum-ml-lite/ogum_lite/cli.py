@@ -13,6 +13,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from .features import build_feature_table
+from .ml_hooks import (
+    kmeans_explore,
+    predict_from_artifact,
+    train_classifier,
+    train_regressor,
+)
 from .theta_msc import OgumLite, score_activation_energies
 
 
@@ -45,6 +51,69 @@ def cmd_features(args: argparse.Namespace) -> None:
     print(f"Feature table saved to {output_path}")
     if args.print:
         print(features_df.to_string(index=False))
+
+
+def cmd_ml_features(args: argparse.Namespace) -> None:
+    cmd_features(args)
+
+
+def _print_cv_metrics(cv_metrics: dict[str, float]) -> None:
+    n_splits = cv_metrics.get("n_splits")
+    n_groups = cv_metrics.get("n_groups")
+    header = "Cross-validation metrics"
+    if n_splits:
+        header += f" (n_splits={int(n_splits)})"
+    if n_groups:
+        header += f" | n_groups={int(n_groups)}"
+    print(header)
+    for key in sorted(cv_metrics):
+        if key in {"n_splits", "n_groups"}:
+            continue
+        print(f"  {key}: {cv_metrics[key]:.4f}")
+
+
+def cmd_ml_train_classifier(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    result = train_classifier(
+        df,
+        target_col=args.target,
+        group_col=args.group_col,
+        feature_cols=args.features,
+        outdir=args.outdir,
+    )
+    _print_cv_metrics(result["cv"])
+    print(f"Artifacts saved to {args.outdir}")
+
+
+def cmd_ml_train_regressor(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    result = train_regressor(
+        df,
+        target_col=args.target,
+        group_col=args.group_col,
+        feature_cols=args.features,
+        outdir=args.outdir,
+    )
+    _print_cv_metrics(result["cv"])
+    print(f"Artifacts saved to {args.outdir}")
+
+
+def cmd_ml_predict(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    predictions = predict_from_artifact(args.model, df)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    predictions.to_csv(args.out, index=False)
+    print(predictions.to_string(index=False))
+    print(f"Predictions saved to {args.out}")
+
+
+def cmd_ml_cluster(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    clusters = kmeans_explore(df, args.features, k=args.k)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    clusters.to_csv(args.out, index=False)
+    print(clusters.to_string(index=False))
+    print(f"Cluster assignments saved to {args.out}")
 
 
 def cmd_theta(args: argparse.Namespace) -> None:
@@ -267,6 +336,151 @@ def build_parser() -> argparse.ArgumentParser:
         help="Imprime a tabela resultante no stdout.",
     )
     parser_features.set_defaults(func=cmd_features)
+
+    parser_ml = subparsers.add_parser("ml", help="ML utilities")
+    ml_subparsers = parser_ml.add_subparsers(dest="ml_command", required=True)
+
+    parser_ml_features = ml_subparsers.add_parser(
+        "features", help="Compute per-sample features for ML"
+    )
+    parser_ml_features.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="CSV longo com colunas sample_id,time_s,temp_C,rho_rel.",
+    )
+    parser_ml_features.add_argument(
+        "--output",
+        type=Path,
+        default=Path("features.csv"),
+        help="Arquivo de saída para a tabela de features.",
+    )
+    parser_ml_features.add_argument(
+        "--ea",
+        type=parse_ea_list,
+        required=True,
+        help="Lista de Ea em kJ/mol (ex.: '200,300,400').",
+    )
+    parser_ml_features.add_argument(
+        "--group-col",
+        default="sample_id",
+        help="Nome da coluna com o identificador da amostra.",
+    )
+    parser_ml_features.add_argument(
+        "--time-column",
+        default="time_s",
+        help="Nome da coluna de tempo (s).",
+    )
+    parser_ml_features.add_argument(
+        "--temperature-column",
+        default="temp_C",
+        help="Nome da coluna de temperatura (°C).",
+    )
+    parser_ml_features.add_argument(
+        "--y-column",
+        default="rho_rel",
+        help="Coluna de densificação relativa (0–1).",
+    )
+    parser_ml_features.add_argument(
+        "--print",
+        action="store_true",
+        help="Imprime a tabela resultante no stdout.",
+    )
+    parser_ml_features.set_defaults(func=cmd_ml_features)
+
+    def _add_train_args(train_parser: argparse.ArgumentParser) -> None:
+        train_parser.add_argument(
+            "--table",
+            type=Path,
+            required=True,
+            help="Tabela de features (CSV).",
+        )
+        train_parser.add_argument(
+            "--target",
+            required=True,
+            help="Coluna alvo para o treinamento.",
+        )
+        train_parser.add_argument(
+            "--group-col",
+            required=True,
+            help="Coluna com o identificador de grupo/amostra.",
+        )
+        train_parser.add_argument(
+            "--features",
+            nargs="+",
+            required=True,
+            help="Lista de colunas de entrada.",
+        )
+        train_parser.add_argument(
+            "--outdir",
+            type=Path,
+            required=True,
+            help="Diretório onde os artefatos serão salvos.",
+        )
+
+    parser_ml_train_cls = ml_subparsers.add_parser(
+        "train-cls", help="Treinar classificador com GroupKFold"
+    )
+    _add_train_args(parser_ml_train_cls)
+    parser_ml_train_cls.set_defaults(func=cmd_ml_train_classifier)
+
+    parser_ml_train_reg = ml_subparsers.add_parser(
+        "train-reg", help="Treinar regressor com GroupKFold"
+    )
+    _add_train_args(parser_ml_train_reg)
+    parser_ml_train_reg.set_defaults(func=cmd_ml_train_regressor)
+
+    parser_ml_predict = ml_subparsers.add_parser(
+        "predict", help="Gerar previsões usando artefato salvo"
+    )
+    parser_ml_predict.add_argument(
+        "--table",
+        type=Path,
+        required=True,
+        help="Tabela de features (CSV).",
+    )
+    parser_ml_predict.add_argument(
+        "--model",
+        type=Path,
+        required=True,
+        help="Caminho para o arquivo .joblib salvo.",
+    )
+    parser_ml_predict.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Arquivo CSV para salvar as predições.",
+    )
+    parser_ml_predict.set_defaults(func=cmd_ml_predict)
+
+    parser_ml_cluster = ml_subparsers.add_parser(
+        "cluster", help="Clusterização exploratória via KMeans"
+    )
+    parser_ml_cluster.add_argument(
+        "--table",
+        type=Path,
+        required=True,
+        help="Tabela de features (CSV).",
+    )
+    parser_ml_cluster.add_argument(
+        "--features",
+        nargs="+",
+        required=True,
+        help="Colunas numéricas usadas no KMeans.",
+    )
+    parser_ml_cluster.add_argument(
+        "--k",
+        type=int,
+        default=3,
+        help="Número de clusters (k).",
+    )
+    parser_ml_cluster.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Arquivo CSV para salvar os clusters.",
+    )
+    parser_ml_cluster.set_defaults(func=cmd_ml_cluster)
 
     parser_theta = subparsers.add_parser("theta", help="Compute θ(Ea) table")
     parser_theta.add_argument(
