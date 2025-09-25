@@ -37,6 +37,7 @@ include = "\\.py$"
 [tool.ruff]
 line-length = 88
 src = ["ogum_lite", "tests"]
+exclude = ["notebooks/*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

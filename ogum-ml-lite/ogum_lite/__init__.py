@@ -6,6 +6,12 @@ from .features import (
     finite_diff,
     theta_features,
 )
+from .ml_hooks import (
+    kmeans_explore,
+    predict_from_artifact,
+    train_classifier,
+    train_regressor,
+)
 from .theta_msc import (
     R_GAS_CONSTANT,
     MasterCurveResult,
@@ -22,6 +28,10 @@ __all__ = [
     "build_feature_table",
     "build_master_curve",
     "finite_diff",
+    "kmeans_explore",
+    "predict_from_artifact",
     "score_activation_energies",
     "theta_features",
+    "train_classifier",
+    "train_regressor",
 ]

@@ -111,6 +111,15 @@ def aggregate_timeseries(
         missing_cols = ", ".join(sorted(missing))
         raise KeyError(f"Missing required columns: {missing_cols}")
 
+    for numeric_col in (t_col, temp_col, y_col):
+        if not pd.api.types.is_numeric_dtype(df[numeric_col]):
+            raise TypeError(f"Column '{numeric_col}' must be numeric")
+
+    if y_col == "rho_rel":
+        y_values = df[y_col].dropna()
+        if ((y_values < 0) | (y_values > 1)).any():
+            raise ValueError("Column 'rho_rel' must be within [0, 1]")
+
     records: list[dict[str, float | str]] = []
 
     for sample_id, group in df.groupby(group_col):
@@ -186,9 +195,11 @@ def theta_features(
         missing_cols = ", ".join(sorted(missing))
         raise KeyError(f"Missing required columns: {missing_cols}")
 
-    ea_values = list(ea_kj_list)
+    ea_values = [float(value) for value in ea_kj_list]
     if not ea_values:
         raise ValueError("`ea_kj_list` must contain at least one activation energy")
+    if any(value <= 0 for value in ea_values):
+        raise ValueError("Activation energies must be positive")
 
     records: list[dict[str, float | str]] = []
 
@@ -223,6 +234,17 @@ def build_feature_table(
     y_col: str = "rho_rel",
 ) -> pd.DataFrame:
     """Combine aggregated statistics and θ(Ea) totals for each sample."""
+
+    required_columns = {group_col, t_col, temp_col, y_col}
+    missing = required_columns - set(df_long.columns)
+    if missing:
+        missing_cols = ", ".join(sorted(missing))
+        raise KeyError(f"Missing required columns: {missing_cols}")
+
+    if y_col == "rho_rel":
+        y_values = df_long[y_col].dropna()
+        if ((y_values < 0) | (y_values > 1)).any():
+            raise ValueError("Column 'rho_rel' must be within [0, 1]")
 
     agg = aggregate_timeseries(
         df_long,
