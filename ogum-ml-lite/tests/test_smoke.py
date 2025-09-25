@@ -14,8 +14,8 @@ def synthetic_dataset() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "time_s": time,
-            "temperature_C": temperature,
-            "densification": densification,
+            "temp_C": temperature,
+            "rho_rel": densification,
             "datatype": "heating",
         }
     )
@@ -32,7 +32,7 @@ def test_theta_and_msc_end_to_end(tmp_path) -> None:
 
     msc_df = ogum.build_msc(200)
     assert len(msc_df) == len(df)
-    assert np.isclose(msc_df["densification"].iloc[-1], df["densification"].iloc[-1])
+    assert np.isclose(msc_df["densification"].iloc[-1], df["rho_rel"].iloc[-1])
 
     msc_path = tmp_path / "msc.csv"
     msc_df.to_csv(msc_path, index=False)
