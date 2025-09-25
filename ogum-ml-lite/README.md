@@ -4,13 +4,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Open In Colab](https://colab.research.googleusercontent.com/assets/colab-badge.svg)](https://colab.research.google.com/github/huyraestevao/ogum-ml/blob/main/ogum-ml-lite/notebooks/ogum_ml_demo.ipynb)
 
-Bootstrap do toolkit **Ogum ML Lite** para cálculos de θ(Ea) e Master Sintering
-Curves (MSC) compatíveis com o ecossistema Ogum 6.4. O objetivo é disponibilizar
-um pacote Python leve, fácil de usar em Google Colab e pronto para integrações
-com pipelines de ML.
+Bootstrap do toolkit **Ogum ML Lite** para cálculos de θ(Ea), derivadas
+cinéticas, ajustes Arrhenius e Master Sintering Curves (MSC) compatíveis com o
+ecossistema Ogum 6.4. O objetivo é disponibilizar um pacote Python leve, fácil
+de usar em Google Colab e pronto para integrações com pipelines de ML.
 
 ## Visão geral
 
+- **Pré-processamento completo**: mapeamento automático de planilhas
+  (.csv/.xls/.xlsx), normalização de unidades e metadados obrigatórios
+  (`composition`, `technique`).
+- **Derivadas e Arrhenius**: suavização Savitzky–Golay/média móvel, cálculo de
+  `dy/dt`, `dT/dt`, razões Arrhenius e ajustes globais/por estágio.
 - **θ(Ea) rápido**: cálculo direto a partir de ensaios de sinterização via
   `OgumLite.compute_theta_table` ou CLI.
 - **MSC robusta**: métrica segmentada (55–70–90%) para avaliar o colapso das
@@ -18,8 +23,8 @@ com pipelines de ML.
 - **Compatibilidade**: nomes de colunas (`sample_id`, `time_s`, `temp_C`,
   `rho_rel`) alinhados com Ogum 6.4 e notebooks do repositório
   [ogumsoftware](https://github.com/huyraestevao/ogumsoftware).
-- **Pronto para ML**: módulo `ml_hooks` reservado para integração de pipelines e
-  `features` com engenharia de atributos por amostra.
+- **Pronto para ML**: módulo `features` com engenharia global e stage-aware,
+  integração com `theta_msc` e `ml_hooks` para pipelines supervisionados.
 
 ## Instalação
 
@@ -32,14 +37,34 @@ pip install -e .[dev]
 
 ## Formato de dados (long)
 
-Os ensaios devem estar em formato *long* com uma linha por instante de tempo:
+Os ensaios devem estar em formato *long* com uma linha por instante de tempo e
+metadados mínimos:
 
-| sample_id | time_s | temp_C | rho_rel |
-|-----------|--------|--------|---------|
-| S0        | 0.0    | 25.0   | 0.10    |
-| S0        | 60.0   | 215.0  | 0.24    |
-| S1        | 0.0    | 25.0   | 0.08    |
-| S1        | 60.0   | 210.0  | 0.21    |
+| Coluna       | Descrição                                        |
+|--------------|--------------------------------------------------|
+| `sample_id`  | Identificador único da amostra/ensaio             |
+| `time`       | Tempo em segundos ou minutos (`time_s`/`time_min`)|
+| `temp`       | Temperatura em °C ou K (`temp_C`/`temp_K`)        |
+| `response`   | `rho_rel`/`shrinkage_rel` (0–1)                   |
+| `composition`| Legenda da liga/composição                       |
+| `technique`  | Rota de sinterização (dropdown Ogum 6.4)          |
+
+Outras colunas (pressão, estágio, etc.) podem ser preservadas — o mapeamento
+automático permite alinhar planilhas heterogêneas aos nomes canônicos.
+
+## Pipeline (Fase 3.1)
+
+Fluxo recomendado:
+
+1. **Importar planilha** (`io map`): inferir/ajustar o mapeamento de colunas e
+   normalizar unidades.
+2. **Pré-processar** (`preprocess derive`): aplicar o mapeamento, suavizar e
+   gerar as derivadas (`dy/dt`, `dT/dt`, `T·dy/dt`, ...).
+3. **Arrhenius** (`arrhenius fit`): calcular Ea global, por estágios padrão
+   (55–70%, 70–90%) e exportar a regressão `ln(T·dy/dt)` vs `1/T`.
+4. **Feature store** (`features build`): consolidar métricas globais + por
+   estágio + Ea Arrhenius + θ(Ea) opcionais para ML.
+5. **MSC/θ** (`msc`, `theta`): continuar com os módulos clássicos se necessário.
 
 Outras colunas (pressão, estágio, etc.) podem ser preservadas — apenas os
 nomes acima são obrigatórios para o pipeline mínimo.
@@ -47,27 +72,37 @@ nomes acima são obrigatórios para o pipeline mínimo.
 ## Uso rápido (CLI)
 
 ```bash
-# Engenharia de atributos por amostra
-python -m ogum_lite.cli features \
-  --input data/ensaios_long.csv \
-  --ea "200,300,400" \
-  --output exports/features.csv
+# 1) Inferir mapeamento e salvar JSON
+python -m ogum_lite.cli io map \
+  --input data/ensaio.xlsx \
+  --out artifacts/mapping.json \
+  --edit
 
-# Tabelas θ(Ea) por ponto (formato longo)
-python -m ogum_lite.cli theta \
-  --input data/ensaios_long.csv \
-  --ea "200,300,400" \
-  --outdir exports/
+# 2) Aplicar mapeamento + derivadas
+python -m ogum_lite.cli preprocess derive \
+  --input data/ensaio.xlsx \
+  --map artifacts/mapping.json \
+  --smooth savgol \
+  --out exports/derivatives.csv
 
-# Curva Mestra com métrica segmentada robusta
-python -m ogum_lite.cli msc \
-  --input data/ensaios_long.csv \
-  --ea "200,300,400" \
-  --metric segmented \
-  --csv exports/msc_curve.csv \
-  --png exports/msc.png
+# 3) Ajustes Arrhenius (global + estágios)
+python -m ogum_lite.cli arrhenius fit \
+  --input exports/derivatives.csv \
+  --stages "0.55-0.70,0.70-0.90" \
+  --out exports/arrhenius.csv \
+  --png exports/arrhenius.png
 
-# UI experimental em Gradio
+# 4) Feature store stage-aware + θ(Ea)
+python -m ogum_lite.cli features build \
+  --input exports/derivatives.csv \
+  --stages "0.55-0.70,0.70-0.90" \
+  --theta-ea "200,250,300" \
+  --out exports/feature_store.csv
+
+# Comandos legados
+python -m ogum_lite.cli features --input ...
+python -m ogum_lite.cli theta --input ...
+python -m ogum_lite.cli msc --input ...
 python -m ogum_lite.cli ui
 ```
 
@@ -129,19 +164,21 @@ Targets canônicos compatíveis com Ogum 6.4:
 | Classificação    | `technique` (Conventional, UHS, FS, SPS, …) |
 | Regressão        | `T90_C`, `rho_final`, `Ea_app_kJmol`        |
 
-As features geradas automaticamente incluem `heating_rate_med_C_per_s`,
-`T_max_C`, `y_final`, `t_to_90pct_s`, `dy_dt_max`, `T_at_dy_dt_max_C` e as
-colunas `theta_Ea_*` para cada Ea informado.
+As features geradas automaticamente incluem métricas globais
+(`heating_rate_med_C_per_s`, `T_max_C`, `y_final`, `t_to_90pct_s`, `dy_dt_max`,
+`dT_dt_max`, `T_at_dy_dt_max_C`), colunas segmentadas (`*_s1`, `*_s2`) e Ea
+Arrhenius (`Ea_arr_global_kJ`, `Ea_arr_55_70_kJ`, …), além das integrais
+`theta_Ea_*` quando solicitadas.
 
 ## Fluxo em Colab
 
-1. Abra o notebook de exemplo clicando no badge **Open In Colab** acima.
-2. Execute a primeira célula para gerar um CSV sintético ou carregue o seu
-   arquivo (`sample_id,time_s,temp_C,rho_rel`).
-3. Use as células seguintes para gerar `features.csv`, `msc_curve.csv` e o
-   gráfico `msc.png` diretamente no Colab.
+1. Abra o notebook de exemplo clicando no badge **Open In Colab** acima ou no
+   novo `notebooks/ogum_ml_derivatives_demo.ipynb`.
+2. Execute a primeira célula para mapear a planilha e gerar `derivatives.csv`.
+3. Use as células seguintes para obter `arrhenius.csv`, `feature_store.csv` e a
+   curva MSC.
 4. Opcional: rode `python -m ogum_lite.cli ui` em uma célula para acessar a UI
-   interativa.
+   interativa com mapeamento assistido.
 
 ## Integração com Ogum 6.4
 

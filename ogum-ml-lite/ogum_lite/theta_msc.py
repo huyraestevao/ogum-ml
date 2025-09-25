@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import cumulative_trapezoid
 
+from .stages import DEFAULT_STAGES
+
 R_GAS_CONSTANT = 8.314462618  # J/(mol*K)
 
 
@@ -311,7 +313,7 @@ def build_master_curve(
     temp_col: str = "temp_C",
     y_col: str = "rho_rel",
     normalize_theta: Literal["minmax", None] = "minmax",
-    segments: Sequence[Tuple[float, float]] = ((0.55, 0.70), (0.70, 0.90)),
+    segments: Sequence[Tuple[float, float]] = DEFAULT_STAGES,
     grid_size: int = 200,
 ) -> MasterCurveResult:
     """Collapse multiple runs into a MSC and compute error metrics.
