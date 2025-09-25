@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+.python-version
+
+# Virtual environments
+.env
+.venv
+venv/
+ENV/
+
+# Notebooks
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# Editors
+.vscode/
+.idea/
+
+# Ruff / Black cache
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Data exports
+exports/

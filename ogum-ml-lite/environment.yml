@@ -1,0 +1,16 @@
+name: ogum-ml-lite
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - joblib
+  - gradio
+  - ruff
+  - black
+  - pytest
+  - pytest-asyncio
