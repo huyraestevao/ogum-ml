@@ -14,7 +14,8 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.model_selection import GroupKFold, cross_validate
+from sklearn.inspection import permutation_importance as skl_permutation_importance
+from sklearn.model_selection import GroupKFold, RandomizedSearchCV, cross_validate
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -197,6 +198,442 @@ def _clean_training_frame(
     if subset.empty:
         raise ValueError("Training dataframe is empty after dropping missing values")
     return subset
+
+
+def _make_group_kfold(groups: pd.Series, requested_splits: int) -> GroupKFold:
+    unique_groups = pd.Index(groups).dropna().unique()
+    if unique_groups.size < 2:
+        raise ValueError("At least two groups are required for cross-validation")
+    n_splits = min(max(requested_splits, 2), unique_groups.size)
+    if n_splits < 2:
+        raise ValueError("GroupKFold requires at least two splits")
+    return GroupKFold(n_splits=n_splits)
+
+
+def _update_feature_metadata(outdir: Path, feature_cols: Sequence[str]) -> Path:
+    feature_cols_path = outdir / "feature_cols.json"
+    _dump_json(feature_cols_path, {"features": list(feature_cols)})
+    return feature_cols_path
+
+
+def _update_model_card(
+    outdir: Path,
+    *,
+    base_card: dict,
+    best_params: dict,
+    cv_metrics: dict[str, float],
+    tuning_meta: dict[str, int | float | str],
+) -> Path:
+    model_card_path = outdir / "model_card.json"
+    if model_card_path.exists():
+        try:
+            existing = json.loads(model_card_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:  # pragma: no cover - defensive
+            existing = {}
+    else:
+        existing = {}
+
+    model_card = {**existing, **base_card}
+    model_card["best_params"] = best_params
+    model_card["cross_validation"] = cv_metrics
+    history = list(model_card.get("history", []))
+    history.append(
+        {
+            "event": "tuning",
+            "timestamp": base_card["timestamp"],
+            "best_params": best_params,
+            "cv_metrics": cv_metrics,
+            "meta": tuning_meta,
+        }
+    )
+    model_card["history"] = history
+    _dump_json(model_card_path, model_card)
+    return model_card_path
+
+
+def random_search_classifier(
+    df: pd.DataFrame,
+    target_col: str,
+    group_col: str,
+    feature_cols: list[str],
+    outdir: Path,
+    n_iter: int = 40,
+    cv_splits: int = 5,
+    random_state: int = 42,
+) -> dict:
+    """Tune a classification pipeline with RandomizedSearchCV.
+
+    Parameters
+    ----------
+    df
+        Feature dataframe containing ``target_col``, ``group_col`` and ``feature_cols``.
+    target_col
+        Name of the target column to be predicted.
+    group_col
+        Column used to build ``GroupKFold`` splits.
+    feature_cols
+        List of feature columns available for the model.
+    outdir
+        Directory where the tuned artifacts will be persisted.
+    n_iter
+        Number of sampled hyperparameter combinations.
+    cv_splits
+        Desired number of ``GroupKFold`` splits (capped by the number of groups).
+    random_state
+        Seed controlling sampling of hyperparameters.
+
+    Returns
+    -------
+    dict
+        Dictionary with best parameters, cross-validation summary and artifact paths.
+    """
+
+    cleaned = _clean_training_frame(
+        df,
+        target_col=target_col,
+        group_col=group_col,
+        feature_cols=feature_cols,
+    )
+    X = cleaned[list(feature_cols)]
+    y = cleaned[target_col]
+    groups = cleaned[group_col]
+    column_types = _infer_column_types(X)
+    pipeline = make_classifier(column_types.numeric, column_types.categorical)
+
+    param_space = {
+        "model__n_estimators": list(range(100, 601)),
+        "model__max_depth": [None, *range(5, 31)],
+        "model__max_features": ["sqrt", "log2", None],
+        "model__min_samples_split": list(range(2, 11)),
+    }
+
+    cv = _make_group_kfold(groups, cv_splits)
+    scoring = {"accuracy": "accuracy", "f1_macro": "f1_macro"}
+    search = RandomizedSearchCV(
+        pipeline,
+        param_distributions=param_space,
+        n_iter=n_iter,
+        scoring=scoring,
+        refit="accuracy",
+        cv=cv,
+        random_state=random_state,
+        n_jobs=None,
+        return_train_score=False,
+    )
+    search.fit(X, y, groups=groups)
+
+    cv_results_df = pd.DataFrame(search.cv_results_)
+    best_idx = int(search.best_index_)
+    cv_metrics: dict[str, float] = {
+        "n_splits": cv.get_n_splits(),
+        "n_groups": int(pd.Index(groups).nunique()),
+        "accuracy_mean": float(cv_results_df.loc[best_idx, "mean_test_accuracy"]),
+        "accuracy_std": float(cv_results_df.loc[best_idx, "std_test_accuracy"]),
+        "f1_macro_mean": float(cv_results_df.loc[best_idx, "mean_test_f1_macro"]),
+        "f1_macro_std": float(cv_results_df.loc[best_idx, "std_test_f1_macro"]),
+    }
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    model_path = outdir / "classifier_tuned.joblib"
+    joblib.dump(search.best_estimator_, model_path)
+
+    feature_cols_path = _update_feature_metadata(outdir, feature_cols)
+    target_path = outdir / "target.json"
+    _dump_json(target_path, {"target": target_col})
+    param_grid_path = outdir / "param_grid.json"
+    _dump_json(
+        param_grid_path,
+        {
+            "distributions": {
+                key: (list(value) if isinstance(value, range) else value)
+                for key, value in param_space.items()
+            },
+            "n_iter": n_iter,
+            "random_state": random_state,
+            "cv_splits": cv.get_n_splits(),
+        },
+    )
+
+    cv_results_path = outdir / "cv_results.json"
+    cv_payload = {"records": json.loads(cv_results_df.to_json(orient="records"))}
+    _dump_json(cv_results_path, cv_payload)
+
+    base_card = _build_model_card(
+        task="classification",
+        target_col=target_col,
+        group_col=group_col,
+        feature_cols=feature_cols,
+        column_types=column_types,
+        estimator=search.best_estimator_,
+        cv_metrics=cv_metrics,
+        n_samples=X.shape[0],
+    )
+    tuning_meta = {
+        "n_iter": n_iter,
+        "cv_splits": cv.get_n_splits(),
+        "random_state": random_state,
+    }
+    model_card_path = _update_model_card(
+        outdir,
+        base_card=base_card,
+        best_params=search.best_params_,
+        cv_metrics=cv_metrics,
+        tuning_meta=tuning_meta,
+    )
+
+    return {
+        "best_params": search.best_params_,
+        "cv": cv_metrics,
+        "artifacts": {
+            "model": model_path,
+            "feature_cols": feature_cols_path,
+            "target": target_path,
+            "param_grid": param_grid_path,
+            "cv_results": cv_results_path,
+            "model_card": model_card_path,
+        },
+    }
+
+
+def random_search_regressor(
+    df: pd.DataFrame,
+    target_col: str,
+    group_col: str,
+    feature_cols: list[str],
+    outdir: Path,
+    n_iter: int = 40,
+    cv_splits: int = 5,
+    random_state: int = 42,
+) -> dict:
+    """Tune a regression pipeline with RandomizedSearchCV.
+
+    Parameters
+    ----------
+    df
+        Feature dataframe containing ``target_col``, ``group_col`` and ``feature_cols``.
+    target_col
+        Name of the target column to be predicted.
+    group_col
+        Column used to build ``GroupKFold`` splits.
+    feature_cols
+        List of feature columns available for the model.
+    outdir
+        Directory where the tuned artifacts will be persisted.
+    n_iter
+        Number of sampled hyperparameter combinations.
+    cv_splits
+        Desired number of ``GroupKFold`` splits (capped by the number of groups).
+    random_state
+        Seed controlling sampling of hyperparameters.
+
+    Returns
+    -------
+    dict
+        Dictionary with best parameters, cross-validation summary and artifact paths.
+    """
+
+    cleaned = _clean_training_frame(
+        df,
+        target_col=target_col,
+        group_col=group_col,
+        feature_cols=feature_cols,
+    )
+    X = cleaned[list(feature_cols)]
+    y = cleaned[target_col]
+    groups = cleaned[group_col]
+    column_types = _infer_column_types(X)
+    pipeline = make_regressor(column_types.numeric, column_types.categorical)
+
+    param_space = {
+        "model__n_estimators": list(range(100, 601)),
+        "model__max_depth": [None, *range(5, 31)],
+        "model__max_features": ["sqrt", "log2", None],
+        "model__min_samples_split": list(range(2, 11)),
+    }
+
+    cv = _make_group_kfold(groups, cv_splits)
+    scoring = {"mae": "neg_mean_absolute_error", "rmse": "neg_root_mean_squared_error"}
+    search = RandomizedSearchCV(
+        pipeline,
+        param_distributions=param_space,
+        n_iter=n_iter,
+        scoring=scoring,
+        refit="mae",
+        cv=cv,
+        random_state=random_state,
+        n_jobs=None,
+        return_train_score=False,
+    )
+    search.fit(X, y, groups=groups)
+
+    cv_results_df = pd.DataFrame(search.cv_results_)
+    best_idx = int(search.best_index_)
+    mae_mean = float(cv_results_df.loc[best_idx, "mean_test_mae"])
+    mae_std = float(cv_results_df.loc[best_idx, "std_test_mae"])
+    rmse_mean = float(cv_results_df.loc[best_idx, "mean_test_rmse"])
+    rmse_std = float(cv_results_df.loc[best_idx, "std_test_rmse"])
+    cv_metrics: dict[str, float] = {
+        "n_splits": cv.get_n_splits(),
+        "n_groups": int(pd.Index(groups).nunique()),
+        "mae_mean": float(-mae_mean),
+        "mae_std": float(abs(mae_std)),
+        "rmse_mean": float(-rmse_mean),
+        "rmse_std": float(abs(rmse_std)),
+    }
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    model_path = outdir / "regressor_tuned.joblib"
+    joblib.dump(search.best_estimator_, model_path)
+
+    feature_cols_path = _update_feature_metadata(outdir, feature_cols)
+    target_path = outdir / "target.json"
+    _dump_json(target_path, {"target": target_col})
+    param_grid_path = outdir / "param_grid.json"
+    _dump_json(
+        param_grid_path,
+        {
+            "distributions": {
+                key: (list(value) if isinstance(value, range) else value)
+                for key, value in param_space.items()
+            },
+            "n_iter": n_iter,
+            "random_state": random_state,
+            "cv_splits": cv.get_n_splits(),
+        },
+    )
+
+    cv_results_path = outdir / "cv_results.json"
+    cv_payload = {"records": json.loads(cv_results_df.to_json(orient="records"))}
+    _dump_json(cv_results_path, cv_payload)
+
+    base_card = _build_model_card(
+        task="regression",
+        target_col=target_col,
+        group_col=group_col,
+        feature_cols=feature_cols,
+        column_types=column_types,
+        estimator=search.best_estimator_,
+        cv_metrics=cv_metrics,
+        n_samples=X.shape[0],
+    )
+    tuning_meta = {
+        "n_iter": n_iter,
+        "cv_splits": cv.get_n_splits(),
+        "random_state": random_state,
+    }
+    model_card_path = _update_model_card(
+        outdir,
+        base_card=base_card,
+        best_params=search.best_params_,
+        cv_metrics=cv_metrics,
+        tuning_meta=tuning_meta,
+    )
+
+    return {
+        "best_params": search.best_params_,
+        "cv": cv_metrics,
+        "artifacts": {
+            "model": model_path,
+            "feature_cols": feature_cols_path,
+            "target": target_path,
+            "param_grid": param_grid_path,
+            "cv_results": cv_results_path,
+            "model_card": model_card_path,
+        },
+    }
+
+
+def compute_permutation_importance(
+    model: Pipeline,
+    X: pd.DataFrame,
+    y: pd.Series,
+    scoring: str,
+    n_repeats: int = 10,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Compute permutation feature importance scores.
+
+    Parameters
+    ----------
+    model
+        Fitted :class:`~sklearn.pipeline.Pipeline` used to evaluate permutations.
+    X
+        Feature matrix used for evaluation (must match the training schema).
+    y
+        Target values associated with ``X``.
+    scoring
+        Scoring function compatible with scikit-learn (higher is better).
+    n_repeats
+        Number of shuffles for each feature.
+    random_state
+        Seed controlling the permutation RNG.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Dataframe with ``feature``, ``importance_mean`` and ``importance_std`` columns
+        sorted by descending importance.
+    """
+
+    result = skl_permutation_importance(
+        model,
+        X,
+        y,
+        scoring=scoring,
+        n_repeats=n_repeats,
+        random_state=random_state,
+        n_jobs=None,
+    )
+    if isinstance(X, pd.DataFrame):
+        feature_names = list(X.columns)
+    else:  # pragma: no cover - defensive
+        feature_names = [
+            f"feature_{idx}" for idx in range(len(result.importances_mean))
+        ]
+    importance_df = pd.DataFrame(
+        {
+            "feature": feature_names,
+            "importance_mean": result.importances_mean,
+            "importance_std": result.importances_std,
+        }
+    )
+    importance_df = importance_df.sort_values("importance_mean", ascending=False)
+    importance_df.reset_index(drop=True, inplace=True)
+    return importance_df
+
+
+def filter_features_by_importance(
+    imp_df: pd.DataFrame,
+    k_top: int | None = None,
+    min_importance: float | None = None,
+) -> list[str]:
+    """Select features based on permutation importance scores.
+
+    Parameters
+    ----------
+    imp_df
+        Dataframe returned by :func:`compute_permutation_importance`.
+    k_top
+        Maximum number of features to keep (highest importances first).
+    min_importance
+        Minimum importance threshold required to keep a feature.
+
+    Returns
+    -------
+    list[str]
+        Sorted feature names passing the provided criteria.
+    """
+
+    if imp_df.empty:
+        return []
+
+    filtered = imp_df.copy()
+    if min_importance is not None:
+        filtered = filtered[filtered["importance_mean"] >= min_importance]
+    filtered = filtered.sort_values("importance_mean", ascending=False)
+    if k_top is not None:
+        filtered = filtered.head(max(k_top, 0))
+    return filtered["feature"].tolist()
 
 
 def _dump_json(path: Path, payload: dict) -> None:
