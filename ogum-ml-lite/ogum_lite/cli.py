@@ -7,13 +7,22 @@ import json
 import tempfile
 import zipfile
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List
 
 import gradio as gr
+import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+)
 
 from .arrhenius import arrhenius_lnT_dy_dt_vs_invT, fit_arrhenius_global
 from .features import arrhenius_feature_table, build_feature_store, build_feature_table
@@ -25,12 +34,22 @@ from .io_mapping import (
     read_table,
 )
 from .ml_hooks import (
+    compute_permutation_importance,
+    filter_features_by_importance,
     kmeans_explore,
     predict_from_artifact,
+    random_search_classifier,
+    random_search_regressor,
     train_classifier,
     train_regressor,
 )
 from .preprocess import derive_all
+from .reports import (
+    plot_confusion_matrix,
+    plot_feature_importance,
+    plot_regression_scatter,
+    render_html_report,
+)
 from .stages import DEFAULT_STAGES
 from .theta_msc import OgumLite, score_activation_energies
 
@@ -292,6 +311,20 @@ def _print_cv_metrics(cv_metrics: dict[str, float]) -> None:
         print(f"  {key}: {cv_metrics[key]:.4f}")
 
 
+def _load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_feature_columns_from_dir(outdir: Path) -> list[str]:
+    payload = _load_json(outdir / "feature_cols.json")
+    features = payload.get("features")
+    if not isinstance(features, list):  # pragma: no cover - defensive
+        raise SystemExit("feature_cols.json must contain a list under 'features'")
+    return [str(item) for item in features]
+
+
 def cmd_ml_train_classifier(args: argparse.Namespace) -> None:
     df = pd.read_csv(args.table)
     result = train_classifier(
@@ -305,6 +338,31 @@ def cmd_ml_train_classifier(args: argparse.Namespace) -> None:
     print(f"Artifacts saved to {args.outdir}")
 
 
+def cmd_ml_tune_classifier(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    result = random_search_classifier(
+        df,
+        target_col=args.target,
+        group_col=args.group_col,
+        feature_cols=args.features,
+        outdir=args.outdir,
+        n_iter=args.n_iter,
+        cv_splits=args.cv,
+        random_state=args.random_state,
+    )
+    print("Best hyperparameters:")
+    for key, value in result["best_params"].items():
+        print(f"  {key}: {value}")
+    cv_metrics = result["cv"]
+    acc_mean = cv_metrics.get("accuracy_mean", 0.0)
+    acc_std = cv_metrics.get("accuracy_std", 0.0)
+    f1_mean = cv_metrics.get("f1_macro_mean", 0.0)
+    f1_std = cv_metrics.get("f1_macro_std", 0.0)
+    print(f"accuracy = {acc_mean:.4f} ± {acc_std:.4f}")
+    print(f"f1_macro = {f1_mean:.4f} ± {f1_std:.4f}")
+    print(f"Artifacts saved to {args.outdir}")
+
+
 def cmd_ml_train_regressor(args: argparse.Namespace) -> None:
     df = pd.read_csv(args.table)
     result = train_regressor(
@@ -315,6 +373,31 @@ def cmd_ml_train_regressor(args: argparse.Namespace) -> None:
         outdir=args.outdir,
     )
     _print_cv_metrics(result["cv"])
+    print(f"Artifacts saved to {args.outdir}")
+
+
+def cmd_ml_tune_regressor(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    result = random_search_regressor(
+        df,
+        target_col=args.target,
+        group_col=args.group_col,
+        feature_cols=args.features,
+        outdir=args.outdir,
+        n_iter=args.n_iter,
+        cv_splits=args.cv,
+        random_state=args.random_state,
+    )
+    print("Best hyperparameters:")
+    for key, value in result["best_params"].items():
+        print(f"  {key}: {value}")
+    cv_metrics = result["cv"]
+    mae_mean = cv_metrics.get("mae_mean", 0.0)
+    mae_std = cv_metrics.get("mae_std", 0.0)
+    rmse_mean = cv_metrics.get("rmse_mean", 0.0)
+    rmse_std = cv_metrics.get("rmse_std", 0.0)
+    print(f"MAE = {mae_mean:.4f} ± {mae_std:.4f}")
+    print(f"RMSE = {rmse_mean:.4f} ± {rmse_std:.4f}")
     print(f"Artifacts saved to {args.outdir}")
 
 
@@ -334,6 +417,107 @@ def cmd_ml_cluster(args: argparse.Namespace) -> None:
     clusters.to_csv(args.out, index=False)
     print(clusters.to_string(index=False))
     print(f"Cluster assignments saved to {args.out}")
+
+
+def cmd_ml_report(args: argparse.Namespace) -> None:
+    df = pd.read_csv(args.table)
+    model = joblib.load(args.model)
+    if not hasattr(model, "named_steps"):
+        raise SystemExit("Loaded object is not a scikit-learn Pipeline")
+    estimator = model.named_steps.get("model")
+    if isinstance(estimator, RandomForestClassifier):
+        task = "classification"
+        scoring = "accuracy"
+    elif isinstance(estimator, RandomForestRegressor):
+        task = "regression"
+        scoring = "neg_mean_absolute_error"
+    else:  # pragma: no cover - defensive
+        raise SystemExit("Unsupported estimator for reporting")
+
+    feature_cols = _load_feature_columns_from_dir(args.outdir)
+    required = [args.target, *feature_cols]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise SystemExit(f"Missing required columns in table: {', '.join(missing)}")
+    if args.group_col not in df.columns:
+        raise SystemExit(f"Missing group column '{args.group_col}' in table")
+
+    cleaned = df.dropna(subset=required)
+    if cleaned.empty:
+        raise SystemExit("No rows available after dropping missing values")
+
+    X = cleaned[feature_cols]
+    y_true = cleaned[args.target]
+    y_pred = model.predict(X)
+
+    if task == "classification":
+        accuracy = accuracy_score(y_true, y_pred)
+        f1_macro = f1_score(y_true, y_pred, average="macro")
+        metrics = {"accuracy": f"{accuracy:.4f}", "f1_macro": f"{f1_macro:.4f}"}
+        labels = (
+            pd.Index(pd.Series(y_true))
+            .append(pd.Index(pd.Series(y_pred)))
+            .unique()
+            .tolist()
+        )
+        figures = {
+            "confusion_matrix": plot_confusion_matrix(
+                np.array(y_true),
+                np.array(y_pred),
+                labels=labels,
+            )
+        }
+    else:
+        mae = mean_absolute_error(y_true, y_pred)
+        rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
+        metrics = {"MAE": f"{mae:.4f}", "RMSE": f"{rmse:.4f}"}
+        figures = {
+            "regression_scatter": plot_regression_scatter(
+                np.array(y_true), np.array(y_pred)
+            )
+        }
+
+    importance_df = compute_permutation_importance(
+        model,
+        X,
+        y_true,
+        scoring=scoring,
+        n_repeats=args.n_repeats,
+        random_state=args.random_state,
+    )
+    if task == "regression":
+        importance_df["importance_mean"] = importance_df["importance_mean"].abs()
+    figures["feature_importance"] = plot_feature_importance(importance_df)
+
+    model_card = _load_json(args.outdir / "model_card.json")
+    cv_metrics = model_card.get("cross_validation", {})
+    best_params = model_card.get("best_params", {})
+    dataset_info = {
+        "n_samples": int(cleaned.shape[0]),
+        "n_features": len(feature_cols),
+    }
+    if args.group_col in cleaned.columns:
+        dataset_info["n_groups"] = int(cleaned[args.group_col].nunique())
+
+    context = {
+        "title": f"Ogum ML Report — {args.target}",
+        "task": task,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "metrics": metrics,
+        "cv_metrics": cv_metrics,
+        "best_params": best_params,
+        "dataset": dataset_info,
+        "features": feature_cols,
+        "observations": args.notes or "",
+    }
+    report_path = render_html_report(args.outdir, context=context, figures=figures)
+    print("Report metrics:")
+    for key, value in metrics.items():
+        print(f"  {key}: {value}")
+    top_features = filter_features_by_importance(importance_df, k_top=5)
+    if top_features:
+        print("Top features (permutation importance): " + ", ".join(top_features))
+    print(f"HTML report saved to {report_path}")
 
 
 def cmd_theta(args: argparse.Namespace) -> None:
@@ -1146,6 +1330,54 @@ def build_parser() -> argparse.ArgumentParser:
     _add_train_args(parser_ml_train_reg)
     parser_ml_train_reg.set_defaults(func=cmd_ml_train_regressor)
 
+    parser_ml_tune_cls = ml_subparsers.add_parser(
+        "tune-cls", help="RandomizedSearchCV para classificadores"
+    )
+    _add_train_args(parser_ml_tune_cls)
+    parser_ml_tune_cls.add_argument(
+        "--n-iter",
+        type=int,
+        default=40,
+        help="Número de combinações amostradas na busca aleatória.",
+    )
+    parser_ml_tune_cls.add_argument(
+        "--cv",
+        type=int,
+        default=5,
+        help="Número de splits do GroupKFold.",
+    )
+    parser_ml_tune_cls.add_argument(
+        "--random-state",
+        type=int,
+        default=42,
+        help="Seed para amostragem dos hiperparâmetros.",
+    )
+    parser_ml_tune_cls.set_defaults(func=cmd_ml_tune_classifier)
+
+    parser_ml_tune_reg = ml_subparsers.add_parser(
+        "tune-reg", help="RandomizedSearchCV para regressão"
+    )
+    _add_train_args(parser_ml_tune_reg)
+    parser_ml_tune_reg.add_argument(
+        "--n-iter",
+        type=int,
+        default=40,
+        help="Número de combinações amostradas na busca aleatória.",
+    )
+    parser_ml_tune_reg.add_argument(
+        "--cv",
+        type=int,
+        default=5,
+        help="Número de splits do GroupKFold.",
+    )
+    parser_ml_tune_reg.add_argument(
+        "--random-state",
+        type=int,
+        default=42,
+        help="Seed para amostragem dos hiperparâmetros.",
+    )
+    parser_ml_tune_reg.set_defaults(func=cmd_ml_tune_regressor)
+
     parser_ml_predict = ml_subparsers.add_parser(
         "predict", help="Gerar previsões usando artefato salvo"
     )
@@ -1197,6 +1429,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="Arquivo CSV para salvar os clusters.",
     )
     parser_ml_cluster.set_defaults(func=cmd_ml_cluster)
+
+    parser_ml_report = ml_subparsers.add_parser(
+        "report", help="Gerar relatório HTML com métricas e gráficos"
+    )
+    parser_ml_report.add_argument(
+        "--table",
+        type=Path,
+        required=True,
+        help="Tabela de features (CSV).",
+    )
+    parser_ml_report.add_argument(
+        "--target",
+        required=True,
+        help="Coluna alvo presente na tabela.",
+    )
+    parser_ml_report.add_argument(
+        "--group-col",
+        required=True,
+        help="Coluna de grupos/amostras (usada para estatísticas).",
+    )
+    parser_ml_report.add_argument(
+        "--model",
+        type=Path,
+        required=True,
+        help="Artefato .joblib treinado/tunado.",
+    )
+    parser_ml_report.add_argument(
+        "--outdir",
+        type=Path,
+        required=True,
+        help="Diretório onde os artefatos foram salvos (feature_cols, model_card).",
+    )
+    parser_ml_report.add_argument(
+        "--n-repeats",
+        type=int,
+        default=10,
+        help="Número de permutações para importância de features.",
+    )
+    parser_ml_report.add_argument(
+        "--random-state",
+        type=int,
+        default=42,
+        help="Seed para a importância por permutação.",
+    )
+    parser_ml_report.add_argument(
+        "--notes",
+        default="",
+        help="Observações adicionais para o relatório.",
+    )
+    parser_ml_report.set_defaults(func=cmd_ml_report)
 
     parser_theta = subparsers.add_parser("theta", help="Compute θ(Ea) table")
     parser_theta.add_argument(

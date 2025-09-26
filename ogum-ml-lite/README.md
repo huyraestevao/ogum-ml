@@ -170,6 +170,60 @@ As features geradas automaticamente incluem métricas globais
 Arrhenius (`Ea_arr_global_kJ`, `Ea_arr_55_70_kJ`, …), além das integrais
 `theta_Ea_*` quando solicitadas.
 
+## Tuning & Reports (Fase 4)
+
+Novos comandos do grupo `ml` completam o ciclo **train → tune → explicar →
+documentar** com artefatos prontos para revisão:
+
+```bash
+# RandomizedSearchCV para classificação (RandomForest + GroupKFold)
+python -m ogum_lite.cli ml tune-cls \
+  --table exports/features.csv \
+  --target technique \
+  --group-col sample_id \
+  --features heating_rate_med_C_per_s T_max_C theta_Ea_300kJ theta_Ea_400kJ \
+  --outdir artifacts/cls_technique \
+  --n-iter 40 --cv 5
+
+# RandomizedSearchCV para regressão (RandomForestRegressor)
+python -m ogum_lite.cli ml tune-reg \
+  --table exports/features.csv \
+  --target T90_C \
+  --group-col sample_id \
+  --features heating_rate_med_C_per_s T_max_C theta_Ea_300kJ theta_Ea_400kJ \
+  --outdir artifacts/reg_T90 \
+  --n-iter 40 --cv 5
+
+# Relatório HTML com métricas, gráficos e model card atualizado
+python -m ogum_lite.cli ml report \
+  --table exports/features.csv \
+  --target technique \
+  --group-col sample_id \
+  --model artifacts/cls_technique/classifier_tuned.joblib \
+  --outdir artifacts/cls_technique \
+  --notes "Resultados validados em 2024-05"
+```
+
+Cada execução cria/atualiza os artefatos em `outdir`:
+
+- `*_tuned.joblib`: pipeline completo com pré-processamento e melhor estimador;
+- `param_grid.json` + `cv_results.json`: espaço de busca e resultados da busca;
+- `model_card.json`: inclui histórico (`history`) com tuning, `best_params` e
+  métricas médias (accuracy/F1 ou MAE/RMSE);
+- `feature_importance.png`, `confusion_matrix.png`/`regression_scatter.png` e
+  `report.html` com métricas, figuras embutidas (base64) e observações.
+
+Checklist rápido de boas práticas:
+
+1. **GroupKFold obrigatório**: sempre informar `--group-col sample_id` para
+   evitar vazamento entre ensaios do mesmo corpo de prova.
+2. **Features limpas**: garantir que `feature_cols.json` reflita exatamente as
+   colunas usadas; o comando de tuning atualiza o arquivo automaticamente.
+3. **Relatórios versionados**: utilize `--notes` para registrar contexto
+   (experimento, data, analista) direto no `report.html` e no `model_card`.
+4. **Reprodutibilidade**: fixe `--random-state` quando comparar execuções ou
+   compartilhar notebooks/artefatos com terceiros.
+
 ## Fluxo em Colab
 
 1. Abra o notebook de exemplo clicando no badge **Open In Colab** acima ou no
