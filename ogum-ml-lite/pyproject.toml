@@ -17,11 +17,13 @@ dependencies = [
     "matplotlib",
     "joblib",
     "gradio",
+    "streamlit",
     "openpyxl",
     "pydantic",
     "fastapi",
     "uvicorn",
     "xlrd",
+    "pyyaml",
 ]
 
 classifiers = [
