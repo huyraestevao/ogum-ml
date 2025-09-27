@@ -19,6 +19,8 @@ dependencies = [
     "gradio",
     "openpyxl",
     "pydantic",
+    "fastapi",
+    "uvicorn",
     "xlrd",
 ]
 

@@ -73,11 +73,19 @@ def export_xlsx(
     features_df = _ensure_dataframe(_fetch_table("Features", "features"))
     metrics_df = _ensure_dataframe(_fetch_table("Metrics", "metrics"))
 
+    segments_sheet = None
+
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="Summary", index=False)
         msc_df.to_excel(writer, sheet_name="MSC", index=False)
         features_df.to_excel(writer, sheet_name="Features", index=False)
         metrics_df.to_excel(writer, sheet_name="Metrics", index=False)
+
+        segments_payload = _fetch_table("Segments", "segments", "Segmentation")
+        if segments_payload is not None:
+            segments_df = _ensure_dataframe(segments_payload)
+            segments_df.to_excel(writer, sheet_name="Segments", index=False)
+            segments_sheet = "Segments"
 
         if images:
             workbook = writer.book
@@ -85,11 +93,19 @@ def export_xlsx(
                 "msc.png": ("MSC", "H2"),
                 "confusion.png": ("Metrics", "H2"),
                 "scatter.png": ("Metrics", "H18"),
+                "segments.png": ("Segments", "H2"),
             }
             for key, (sheet, anchor) in mapping.items():
                 data = images.get(key)
                 if not data or XLImage is None:
                     continue
+                if sheet not in workbook.sheetnames:
+                    if sheet == "Segments" and segments_sheet is None:
+                        empty_df = pd.DataFrame()
+                        empty_df.to_excel(writer, sheet_name=sheet, index=False)
+                        workbook = writer.book
+                    else:
+                        continue
                 worksheet = workbook[sheet]
                 image = XLImage(BytesIO(data))
                 worksheet.add_image(image, anchor)

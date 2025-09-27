@@ -34,6 +34,7 @@ from .io_mapping import (
     infer_mapping,
     read_table,
 )
+from .maps import prepare_segment_heatmap, render_segment_heatmap
 from .mechanism import detect_mechanism_change
 from .ml_hooks import (
     compute_permutation_importance,
@@ -849,6 +850,64 @@ def cmd_msc(args: argparse.Namespace) -> None:
         fig.savefig(args.png, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"MSC plot saved to {args.png}")
+
+
+def cmd_maps(args: argparse.Namespace) -> None:
+    dataframe = pd.read_csv(args.input)
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    configurations = [
+        (
+            "blaine_n",
+            "Blaine n heatmap",
+            "magma",
+            "blaine_n_heatmap.png",
+            ".2f",
+        ),
+        (
+            "blaine_mse",
+            "Blaine MSE heatmap",
+            "viridis",
+            "blaine_mse_heatmap.png",
+            ".3f",
+        ),
+    ]
+
+    generated = False
+    for metric, title, cmap, filename, fmt in configurations:
+        matrix = prepare_segment_heatmap(
+            dataframe,
+            metric=metric,
+            group_col=args.group_col,
+        )
+        if matrix.empty:
+            print(f"No columns ending with _{metric}; skipping heatmap.")
+            continue
+        png = render_segment_heatmap(matrix, title=title, cmap=cmap, fmt=fmt)
+        path = outdir / filename
+        path.write_bytes(png)
+        print(f"Saved {metric} heatmap to {path}")
+        generated = True
+
+    if not generated:
+        raise SystemExit(
+            "No Blaine segmentation metrics found. Provide a segment feature table."
+        )
+
+
+def cmd_api(args: argparse.Namespace) -> None:
+    try:
+        import uvicorn
+    except ImportError as exc:  # pragma: no cover - optional dependency guard
+        raise SystemExit("uvicorn is required to launch the API") from exc
+
+    uvicorn.run(
+        "ogum_lite.api.main:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )
 
 
 def launch_ui() -> None:
@@ -2058,6 +2117,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to save the MSC figure.",
     )
     parser_msc.set_defaults(func=cmd_msc)
+
+    parser_maps = subparsers.add_parser("maps", help="Gerar heatmaps de Blaine/segmentos")
+    parser_maps.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="CSV gerado por segment_feature_table ou feature store",
+    )
+    parser_maps.add_argument(
+        "--outdir",
+        type=Path,
+        default=Path("maps"),
+        help="Diretório para salvar os PNG dos mapas.",
+    )
+    parser_maps.add_argument(
+        "--group-col",
+        default="sample_id",
+        help="Coluna com identificador das amostras.",
+    )
+    parser_maps.set_defaults(func=cmd_maps)
+
+    parser_api = subparsers.add_parser("api", help="Rodar a API FastAPI")
+    parser_api.add_argument("--host", default="0.0.0.0", help="Host de binding")
+    parser_api.add_argument("--port", type=int, default=8000, help="Porta de escuta")
+    parser_api.add_argument(
+        "--reload",
+        action="store_true",
+        help="Habilitar auto-reload (desenvolvimento)",
+    )
+    parser_api.set_defaults(func=cmd_api)
 
     parser_ui = subparsers.add_parser("ui", help="Launch Gradio interface")
     parser_ui.set_defaults(func=cmd_ui)

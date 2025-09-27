@@ -125,6 +125,40 @@ O comando `msc` imprime a tabela de métricas (`mse_global`, `mse_segmented`,
 `mse_0.55_0.70`, `mse_0.70_0.90`), destaca o melhor Ea e exporta a curva mestra
 normalizada.
 
+## Mapas de sinterização (Blaine n / MSE)
+
+O CLI `maps` gera heatmaps Matplotlib a partir da tabela retornada por
+`segment_feature_table`/feature store. Os arquivos `blaine_n_heatmap.png` e
+`blaine_mse_heatmap.png` são salvos no diretório indicado (por padrão `maps/`).
+
+```bash
+python -m ogum_lite.cli maps \
+  --input exports/segment_feature_table.csv \
+  --outdir artifacts/maps
+```
+
+## API FastAPI + Docker
+
+Suba a API localmente (porta 8000) com auto-reload opcional:
+
+```bash
+python -m ogum_lite.cli api --host 0.0.0.0 --port 8000 --reload
+```
+
+Os endpoints disponíveis incluem `/prep`, `/features`, `/msc`, `/segmentation`,
+`/mechanism`, `/ml/train` e `/ml/predict`. A documentação interativa pode ser
+acessada em `http://localhost:8000/docs`.
+
+Para executar via Docker, construa a imagem e exponha a porta da API:
+
+```bash
+docker build -t ogum-ml-lite -f docker/Dockerfile .
+docker run --rm -p 8000:8000 ogum-ml-lite
+```
+
+O container inicia a API automaticamente, permitindo testar os endpoints via
+`curl` ou navegando até `/docs`.
+
 ## Validação de dados
 
 Antes de treinar modelos ou calcular θ(Ea), valide os insumos:

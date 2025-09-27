@@ -16,5 +16,7 @@ RUN useradd --create-home --shell /bin/bash ogum
 USER ogum
 WORKDIR /work
 
+EXPOSE 8000
+
 ENTRYPOINT ["python", "-m", "ogum_lite.cli"]
-CMD ["--help"]
+CMD ["api"]
