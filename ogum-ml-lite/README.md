@@ -20,6 +20,10 @@ de usar em Google Colab e pronto para integrações com pipelines de ML.
   `OgumLite.compute_theta_table` ou CLI.
 - **MSC robusta**: métrica segmentada (55–70–90%) para avaliar o colapso das
   curvas por amostra.
+- **Segmentação automática**: CLI `segmentation` com limiares 55–70–90% ou
+  modo data-driven simples.
+- **Mudança de mecanismo**: ajuste piecewise linear com AIC/BIC via
+  `cli mechanism`.
 - **Compatibilidade**: nomes de colunas (`sample_id`, `time_s`, `temp_C`,
   `rho_rel`) alinhados com Ogum 6.4 e notebooks do repositório
   [ogumsoftware](https://github.com/huyraestevao/ogumsoftware).
@@ -98,6 +102,17 @@ python -m ogum_lite.cli features build \
   --stages "0.55-0.70,0.70-0.90" \
   --theta-ea "200,250,300" \
   --out exports/feature_store.csv
+
+# 5) Segmentação automática (fixed/data)
+python -m ogum_lite.cli segmentation \
+  --input exports/derivatives.csv \
+  --mode fixed \
+  --out artifacts/segments.json
+
+# 6) Detecção de mudança de mecanismo (θ vs densificação)
+python -m ogum_lite.cli mechanism \
+  --theta exports/theta_Ea_300kJ.csv \
+  --out artifacts/mechanism.csv
 
 # Comandos legados
 python -m ogum_lite.cli features --input ...

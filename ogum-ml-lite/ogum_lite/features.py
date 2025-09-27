@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
@@ -13,7 +14,9 @@ from .arrhenius import (
     fit_arrhenius_by_stages,
     fit_arrhenius_global,
 )
+from .blaine import fit_blaine_by_segments
 from .preprocess import derive_all, finite_diff
+from .segmentation import segment_dataframe
 from .stages import DEFAULT_STAGES, split_by_stages
 from .theta_msc import R_GAS_CONSTANT
 
@@ -193,6 +196,78 @@ def theta_features(
     return pd.DataFrame.from_records(records)
 
 
+def segment_feature_table(
+    df_long: pd.DataFrame,
+    *,
+    method: str = "fixed",
+    thresholds: Sequence[float] = (0.55, 0.70, 0.90),
+    n_segments: int = 3,
+    min_size: int = 5,
+    group_col: str = "sample_id",
+    t_col: str = "time_s",
+    y_col: str = "y",
+) -> pd.DataFrame:
+    """Compute segmentation + Blaine metrics for each sample."""
+
+    if group_col not in df_long.columns:
+        placeholder = "__global__"
+        working = df_long.copy()
+        working[group_col] = placeholder
+    else:
+        placeholder = None
+        working = df_long
+
+    segments = segment_dataframe(
+        working,
+        group_col=group_col,
+        t_col=t_col,
+        y_col=y_col,
+        method=method,
+        thresholds=thresholds,
+        n_segments=n_segments,
+        min_size=min_size,
+    )
+
+    unique_groups = working[group_col].drop_duplicates().tolist()
+    if not segments:
+        return pd.DataFrame({group_col: unique_groups})
+
+    blaine_results = fit_blaine_by_segments(
+        working,
+        segments,
+        t_col=t_col,
+        y_col=y_col,
+    )
+
+    feature_map: dict[str | int | float, dict[str, float | int | str]] = defaultdict(dict)
+
+    for segment, blaine in zip(segments, blaine_results):
+        sample_key = segment.sample_id
+        if sample_key is None:
+            sample_key = placeholder if placeholder is not None else unique_groups[0]
+
+        record = feature_map[sample_key]
+        record[group_col] = sample_key
+        prefix = f"{segment.method}_seg{segment.segment_index}"
+        record[f"{prefix}_lower"] = segment.lower
+        record[f"{prefix}_upper"] = segment.upper
+        record[f"{prefix}_t_start_s"] = segment.start_time_s
+        record[f"{prefix}_t_end_s"] = segment.end_time_s
+        record[f"{prefix}_duration_s"] = segment.end_time_s - segment.start_time_s
+        record[f"{prefix}_y_start"] = segment.start_y
+        record[f"{prefix}_y_end"] = segment.end_y
+        record[f"{prefix}_y_range"] = segment.end_y - segment.start_y
+        record[f"{prefix}_n_points"] = segment.n_points
+        record[f"{prefix}_blaine_n"] = blaine.n
+        record[f"{prefix}_blaine_r2"] = blaine.r2
+        record[f"{prefix}_blaine_mse"] = blaine.mse
+
+    for sample in unique_groups:
+        feature_map.setdefault(sample, {group_col: sample})
+
+    return pd.DataFrame(list(feature_map.values()))
+
+
 def _stage_suffix(lower: float, upper: float) -> str:
     return f"{int(round(lower * 100)):02d}_{int(round(upper * 100)):02d}"
 
@@ -344,6 +419,10 @@ def build_feature_store(
     poly: int = 3,
     moving_k: int = 5,
     theta_ea_kj: Iterable[float] | None = None,
+    segment_method: str = "fixed",
+    segment_thresholds: Sequence[float] | None = (0.55, 0.70, 0.90),
+    segment_n_segments: int = 3,
+    segment_min_size: int = 5,
 ) -> pd.DataFrame:
     """Build a consolidated feature store including stage-aware columns."""
 
@@ -366,6 +445,18 @@ def build_feature_store(
         y_col=y_col,
     )
 
+    thresholds = segment_thresholds if segment_thresholds is not None else (0.55, 0.70, 0.90)
+    segment_table = segment_feature_table(
+        derived,
+        method=segment_method,
+        thresholds=thresholds,
+        n_segments=segment_n_segments,
+        min_size=segment_min_size,
+        group_col=group_col,
+        t_col=t_col,
+        y_col=y_col,
+    )
+
     stage_tables = build_stage_feature_tables(
         derived,
         stages=stages,
@@ -374,7 +465,7 @@ def build_feature_store(
         T_col=T_col,
         y_col=y_col,
     )
-    features = base.copy()
+    features = base.merge(segment_table, on=group_col, how="left")
     base_feature_cols = [col for col in base.columns if col != group_col]
     for idx, stage in enumerate(stages, start=1):
         label = f"stage_{idx}"
@@ -420,5 +511,6 @@ __all__ = [
     "build_feature_table",
     "build_stage_feature_tables",
     "finite_diff",
+    "segment_feature_table",
     "theta_features",
 ]

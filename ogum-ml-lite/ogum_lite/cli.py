@@ -9,7 +9,7 @@ import zipfile
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Sequence
 
 import gradio as gr
 import joblib
@@ -34,6 +34,7 @@ from .io_mapping import (
     infer_mapping,
     read_table,
 )
+from .mechanism import detect_mechanism_change
 from .ml_hooks import (
     compute_permutation_importance,
     filter_features_by_importance,
@@ -52,6 +53,7 @@ from .reports import (
     render_html_report,
 )
 from .stages import DEFAULT_STAGES
+from .segmentation import segment_dataframe
 from .theta_msc import OgumLite, score_activation_energies
 from .validators import validate_feature_df, validate_long_df
 
@@ -99,6 +101,34 @@ def parse_stage_ranges(raw: str | None) -> list[tuple[float, float]]:
     if not ranges:
         return list(DEFAULT_STAGES)
     return ranges
+
+
+def parse_thresholds(raw: str | None) -> Sequence[float]:
+    """Parse comma separated densification thresholds."""
+
+    if raw is None or not raw.strip():
+        return (0.55, 0.70, 0.90)
+
+    values: list[float] = []
+    for chunk in raw.split(","):
+        piece = chunk.strip()
+        if not piece:
+            continue
+        try:
+            value = float(piece)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise argparse.ArgumentTypeError(
+                f"Invalid threshold '{piece}'. Must be numeric."
+            ) from exc
+        if not 0.0 < value < 1.0:
+            raise argparse.ArgumentTypeError(
+                f"Thresholds must be within (0, 1). Received {value}."
+            )
+        values.append(value)
+
+    if not values:
+        return (0.55, 0.70, 0.90)
+    return tuple(values)
 
 
 def _mapping_from_json(path: Path) -> ColumnMap:
@@ -155,6 +185,48 @@ def _edit_mapping(mapping: ColumnMap, df: pd.DataFrame) -> ColumnMap:
     return ColumnMap(**current)
 
 
+def cmd_segmentation(args: argparse.Namespace) -> None:
+    if args.input is None or args.out is None:
+        raise SystemExit("--input and --out are required")
+
+    df = pd.read_csv(args.input)
+    thresholds = parse_thresholds(args.thresholds)
+
+    segments = segment_dataframe(
+        df,
+        group_col=args.group_col,
+        t_col=args.time_column,
+        y_col=args.y_column,
+        method=args.mode,
+        thresholds=thresholds,
+        n_segments=args.segments,
+        min_size=args.min_size,
+    )
+
+    grouped: dict[str | int | float | None, list[dict[str, float | int | str]]] = {}
+    for segment in segments:
+        key = segment.sample_id
+        if isinstance(key, np.generic):
+            key = key.item()
+        grouped.setdefault(key, []).append(segment.to_dict())
+
+    output_records = []
+    for sample_key, segment_list in grouped.items():
+        output_records.append(
+            {
+                args.group_col: sample_key,
+                "mode": args.mode,
+                "segments": segment_list,
+            }
+        )
+
+    output_path = Path(args.out)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output_records, indent=2, default=float))
+
+    print(f"Saved {len(segments)} segments to {output_path}")
+
+
 def cmd_features(args: argparse.Namespace) -> None:
     required = ["input", "ea"]
     missing = [name for name in required if getattr(args, name) is None]
@@ -179,6 +251,29 @@ def cmd_features(args: argparse.Namespace) -> None:
     print(f"Feature table saved to {output_path}")
     if args.print:
         print(features_df.to_string(index=False))
+
+
+def cmd_mechanism(args: argparse.Namespace) -> None:
+    if args.theta is None or args.out is None:
+        raise SystemExit("--theta and --out are required")
+
+    df = pd.read_csv(args.theta)
+    results = detect_mechanism_change(
+        df,
+        group_col=args.group_col,
+        theta_col=args.theta_column,
+        y_col=args.y_column,
+        max_segments=args.segments,
+        min_size=args.min_size,
+        criterion=args.criterion,
+        threshold=args.threshold,
+        slope_delta=args.slope_delta,
+    )
+
+    output_path = Path(args.out)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    results.to_csv(output_path, index=False)
+    print(f"Mechanism summary saved to {output_path}")
 
 
 def cmd_features_build(args: argparse.Namespace) -> None:
@@ -1308,6 +1403,123 @@ def build_parser() -> argparse.ArgumentParser:
         help="Tamanho da janela da média móvel.",
     )
     parser_arr_fit.set_defaults(func=cmd_arrhenius_fit)
+
+    parser_segmentation = subparsers.add_parser(
+        "segmentation", help="Segmentar curvas de densificação"
+    )
+    parser_segmentation.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="CSV longo com colunas sample_id,time_s,temp_C,rho_rel.",
+    )
+    parser_segmentation.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Arquivo JSON com segmentos detectados.",
+    )
+    parser_segmentation.add_argument(
+        "--mode",
+        choices=["fixed", "data"],
+        default="fixed",
+        help="Modo de segmentação: limiares fixos ou data-driven.",
+    )
+    parser_segmentation.add_argument(
+        "--group-col",
+        default="sample_id",
+        help="Coluna de agrupamento das amostras.",
+    )
+    parser_segmentation.add_argument(
+        "--time-column",
+        default="time_s",
+        help="Coluna de tempo em segundos.",
+    )
+    parser_segmentation.add_argument(
+        "--y-column",
+        default="rho_rel",
+        help="Coluna de densificação relativa (0–1).",
+    )
+    parser_segmentation.add_argument(
+        "--thresholds",
+        default=None,
+        help="Lista de limiares (ex.: '0.55,0.70,0.90') para o modo fixed.",
+    )
+    parser_segmentation.add_argument(
+        "--segments",
+        type=int,
+        default=3,
+        help="Número de segmentos para o modo data-driven.",
+    )
+    parser_segmentation.add_argument(
+        "--min-size",
+        type=int,
+        default=5,
+        help="Número mínimo de pontos por segmento.",
+    )
+    parser_segmentation.set_defaults(func=cmd_segmentation)
+
+    parser_mechanism = subparsers.add_parser(
+        "mechanism", help="Detectar mudança de mecanismo via piecewise linear"
+    )
+    parser_mechanism.add_argument(
+        "--theta",
+        type=Path,
+        required=True,
+        help="CSV com colunas theta e densification.",
+    )
+    parser_mechanism.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Arquivo CSV para salvar o resumo do mecanismo.",
+    )
+    parser_mechanism.add_argument(
+        "--group-col",
+        default="sample_id",
+        help="Coluna de agrupamento (opcional).",
+    )
+    parser_mechanism.add_argument(
+        "--theta-column",
+        default="theta",
+        help="Nome da coluna com θ acumulado.",
+    )
+    parser_mechanism.add_argument(
+        "--y-column",
+        default="densification",
+        help="Coluna de densificação associada a θ.",
+    )
+    parser_mechanism.add_argument(
+        "--segments",
+        type=int,
+        default=2,
+        help="Número máximo de segmentos no ajuste piecewise.",
+    )
+    parser_mechanism.add_argument(
+        "--min-size",
+        type=int,
+        default=5,
+        help="Número mínimo de pontos por segmento.",
+    )
+    parser_mechanism.add_argument(
+        "--criterion",
+        choices=["aic", "bic"],
+        default="bic",
+        help="Critério de seleção do modelo (AIC ou BIC).",
+    )
+    parser_mechanism.add_argument(
+        "--threshold",
+        type=float,
+        default=2.0,
+        help="Ganho mínimo no critério para sinalizar mudança de mecanismo.",
+    )
+    parser_mechanism.add_argument(
+        "--slope-delta",
+        type=float,
+        default=0.02,
+        help="Diferença mínima entre inclinações consecutivas para disparar mudança.",
+    )
+    parser_mechanism.set_defaults(func=cmd_mechanism)
 
     parser_features = subparsers.add_parser(
         "features", help="Utilitários de feature engineering"
