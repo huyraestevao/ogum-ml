@@ -25,6 +25,7 @@ from sklearn.metrics import (
 )
 
 from .arrhenius import arrhenius_lnT_dy_dt_vs_invT, fit_arrhenius_global
+from .exporters import export_onnx, export_xlsx
 from .features import arrhenius_feature_table, build_feature_store, build_feature_table
 from .io_mapping import (
     TECHNIQUE_CHOICES,
@@ -52,6 +53,7 @@ from .reports import (
 )
 from .stages import DEFAULT_STAGES
 from .theta_msc import OgumLite, score_activation_energies
+from .validators import validate_feature_df, validate_long_df
 
 
 def parse_ea_list(raw: str) -> List[float]:
@@ -317,12 +319,161 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def _load_feature_columns_from_dir(outdir: Path) -> list[str]:
     payload = _load_json(outdir / "feature_cols.json")
     features = payload.get("features")
     if not isinstance(features, list):  # pragma: no cover - defensive
         raise SystemExit("feature_cols.json must contain a list under 'features'")
     return [str(item) for item in features]
+
+
+def _print_validation_report(label: str, report: dict) -> None:
+    status = "OK" if report.get("ok") else "FAILED"
+    print(f"{label}: {status}")
+    issues = report.get("issues", [])
+    if not issues:
+        return
+    limit = min(len(issues), 10)
+    print(f"  showing {limit} issue(s) (see JSON for full list)")
+    for issue in issues[:limit]:
+        print(f"  - {issue}")
+    remaining = len(issues) - limit
+    if remaining > 0:
+        print(f"  ... {remaining} more")
+
+
+def cmd_validate_long(args: argparse.Namespace) -> None:
+    dataframe = pd.read_csv(args.input)
+    result = validate_long_df(dataframe, y_col=args.y_col)
+    payload = {
+        "input": str(args.input),
+        "rows": int(len(dataframe)),
+        "y_col": args.y_col,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        **result,
+    }
+    _print_validation_report("Long table validation", payload)
+    _write_json(args.out, payload)
+    print(f"Validation report saved to {args.out}")
+
+
+def cmd_validate_features(args: argparse.Namespace) -> None:
+    dataframe = pd.read_csv(args.table)
+    result = validate_feature_df(dataframe)
+    payload = {
+        "input": str(args.table),
+        "rows": int(len(dataframe)),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        **result,
+    }
+    _print_validation_report("Feature table validation", payload)
+    _write_json(args.out, payload)
+    print(f"Validation report saved to {args.out}")
+
+
+def _load_metrics(path: Path | None) -> tuple[dict, pd.DataFrame]:
+    if path is None:
+        return {}, pd.DataFrame()
+    payload = _load_json(path)
+    if isinstance(payload, dict):
+        rows = [
+            {"metric": key, "value": value} for key, value in sorted(payload.items())
+        ]
+        frame = pd.DataFrame(rows)
+    else:
+        frame = pd.DataFrame(payload)
+    return payload, frame
+
+
+def cmd_export_xlsx(args: argparse.Namespace) -> None:
+    sources: dict[str, str] = {}
+    context: dict[str, object] = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sources": sources,
+    }
+    if args.dataset:
+        context["dataset"] = {"name": args.dataset}
+    if args.notes:
+        context["notes"] = args.notes
+
+    tables: dict[str, pd.DataFrame] = {}
+
+    if args.msc:
+        msc_df = pd.read_csv(args.msc)
+        tables["MSC"] = msc_df
+        sources["msc"] = str(args.msc)
+        msc_summary = context.setdefault("msc_summary", {})
+        if isinstance(msc_summary, dict):
+            msc_summary["rows"] = int(len(msc_df))
+        if "activation_energy" in msc_df.columns:
+            if isinstance(msc_summary, dict):
+                msc_summary["top_activation_energy"] = msc_df.iloc[0][
+                    "activation_energy"
+                ]
+
+    if args.features:
+        features_df = pd.read_csv(args.features)
+        tables["Features"] = features_df
+        sources["features"] = str(args.features)
+        features_summary = context.setdefault("features_summary", {})
+        if isinstance(features_summary, dict):
+            features_summary["rows"] = int(len(features_df))
+
+    metrics_payload, metrics_df = _load_metrics(args.metrics)
+    if not metrics_df.empty:
+        tables["Metrics"] = metrics_df
+    if metrics_payload:
+        context["metrics"] = metrics_payload
+        sources["metrics"] = str(args.metrics)
+
+    if args.msc is None:
+        tables.setdefault("MSC", pd.DataFrame())
+    if args.features is None:
+        tables.setdefault("Features", pd.DataFrame())
+    if args.metrics is None:
+        tables.setdefault("Metrics", pd.DataFrame())
+
+    image_payload: dict[str, bytes] = {}
+    if args.img_msc:
+        image_payload["msc.png"] = Path(args.img_msc).read_bytes()
+    if args.img_cls:
+        image_payload["confusion.png"] = Path(args.img_cls).read_bytes()
+    if args.img_reg:
+        image_payload["scatter.png"] = Path(args.img_reg).read_bytes()
+
+    export_xlsx(
+        args.out,
+        context=context,
+        tables=tables,
+        images=image_payload or None,
+    )
+    print(f"Excel report saved to {args.out}")
+
+
+def _load_feature_names(path: Path) -> list[str]:
+    payload = _load_json(path)
+    if isinstance(payload, dict):
+        features = payload.get("features", payload.get("columns"))
+    else:
+        features = payload
+    if not isinstance(features, list):
+        raise SystemExit("feature list JSON must be an array or contain 'features'")
+    return [str(name) for name in features]
+
+
+def cmd_export_onnx(args: argparse.Namespace) -> None:
+    model = joblib.load(args.model)
+    feature_names = _load_feature_names(args.features_json)
+    out_path = export_onnx(model, feature_names, args.out)
+    if out_path is None:
+        print("ignorado (deps ausentes ou modelo incompatível)")
+    else:
+        print(f"ONNX model exported to {out_path}")
 
 
 def cmd_ml_train_classifier(args: argparse.Namespace) -> None:
@@ -964,6 +1115,49 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ogum ML Lite CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    parser_validate = subparsers.add_parser("validate", help="Data validation helpers")
+    validate_subparsers = parser_validate.add_subparsers(
+        dest="validate_command", required=True
+    )
+    parser_validate_long = validate_subparsers.add_parser(
+        "long", help="Validar tabela em formato long"
+    )
+    parser_validate_long.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="CSV longo com colunas sample_id,time_s,temp_C e densificação.",
+    )
+    parser_validate_long.add_argument(
+        "--y-col",
+        default="rho_rel",
+        help="Coluna usada como densificação (padrão: rho_rel).",
+    )
+    parser_validate_long.add_argument(
+        "--out",
+        type=Path,
+        default=Path("validation_long.json"),
+        help="Arquivo JSON com o relatório da validação.",
+    )
+    parser_validate_long.set_defaults(func=cmd_validate_long)
+
+    parser_validate_features = validate_subparsers.add_parser(
+        "features", help="Validar tabela de features por amostra"
+    )
+    parser_validate_features.add_argument(
+        "--table",
+        type=Path,
+        required=True,
+        help="CSV com features derivadas por amostra.",
+    )
+    parser_validate_features.add_argument(
+        "--out",
+        type=Path,
+        default=Path("validation_features.json"),
+        help="Arquivo JSON com o relatório da validação.",
+    )
+    parser_validate_features.set_defaults(func=cmd_validate_features)
+
     parser_io = subparsers.add_parser("io", help="I/O utilities")
     io_subparsers = parser_io.add_subparsers(dest="io_command", required=True)
     parser_io_map = io_subparsers.add_parser(
@@ -1236,6 +1430,86 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mostra a tabela completa no stdout.",
     )
     parser_features_build.set_defaults(func=cmd_features_build)
+
+    parser_export = subparsers.add_parser("export", help="Exportação de artefatos")
+    export_subparsers = parser_export.add_subparsers(
+        dest="export_command", required=True
+    )
+    parser_export_xlsx = export_subparsers.add_parser(
+        "xlsx", help="Gerar relatório consolidado em XLSX"
+    )
+    parser_export_xlsx.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Caminho do arquivo XLSX a ser criado.",
+    )
+    parser_export_xlsx.add_argument(
+        "--msc",
+        type=Path,
+        help="CSV com a curva MSC consolidada.",
+    )
+    parser_export_xlsx.add_argument(
+        "--features",
+        type=Path,
+        help="CSV com a tabela de features.",
+    )
+    parser_export_xlsx.add_argument(
+        "--metrics",
+        type=Path,
+        help="JSON com métricas de validação e tuning.",
+    )
+    parser_export_xlsx.add_argument(
+        "--dataset",
+        help="Nome do conjunto de dados exibido na aba Summary.",
+    )
+    parser_export_xlsx.add_argument(
+        "--notes",
+        help="Observações adicionais para o relatório.",
+    )
+    parser_export_xlsx.add_argument(
+        "--img-msc",
+        dest="img_msc",
+        type=Path,
+        help="PNG opcional com a curva MSC.",
+    )
+    parser_export_xlsx.add_argument(
+        "--img-cls",
+        dest="img_cls",
+        type=Path,
+        help="PNG opcional com a matriz de confusão.",
+    )
+    parser_export_xlsx.add_argument(
+        "--img-reg",
+        dest="img_reg",
+        type=Path,
+        help="PNG opcional com o gráfico de regressão.",
+    )
+    parser_export_xlsx.set_defaults(func=cmd_export_xlsx)
+
+    parser_export_onnx = export_subparsers.add_parser(
+        "onnx", help="Exportar RandomForest treinado para ONNX"
+    )
+    parser_export_onnx.add_argument(
+        "--model",
+        type=Path,
+        required=True,
+        help="Arquivo .joblib com o estimador treinado.",
+    )
+    parser_export_onnx.add_argument(
+        "--features-json",
+        dest="features_json",
+        type=Path,
+        required=True,
+        help="JSON com a lista de colunas usadas no treino.",
+    )
+    parser_export_onnx.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Arquivo .onnx de saída.",
+    )
+    parser_export_onnx.set_defaults(func=cmd_export_onnx)
 
     parser_ml = subparsers.add_parser("ml", help="ML utilities")
     ml_subparsers = parser_ml.add_subparsers(dest="ml_command", required=True)

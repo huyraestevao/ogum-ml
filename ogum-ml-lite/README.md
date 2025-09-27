@@ -110,6 +110,48 @@ O comando `msc` imprime a tabela de métricas (`mse_global`, `mse_segmented`,
 `mse_0.55_0.70`, `mse_0.70_0.90`), destaca o melhor Ea e exporta a curva mestra
 normalizada.
 
+## Validação de dados
+
+Antes de treinar modelos ou calcular θ(Ea), valide os insumos:
+
+```bash
+# Ensaios longos (sample_id,time_s,temp_C,rho_rel/shrinkage_rel)
+python -m ogum_lite.cli validate long \
+  --input data/ensaios_long.csv \
+  --y-col rho_rel \
+  --out artifacts/validation_long.json
+
+# Tabela de features derivadas
+python -m ogum_lite.cli validate features \
+  --table exports/features.csv \
+  --out artifacts/validation_features.json
+```
+
+O relatório JSON lista colunas ausentes, valores fora de faixa e percentual de
+dados nulos por coluna. No terminal é impresso um resumo com até 10 problemas
+para inspeção rápida.
+
+## Relatório XLSX consolidado
+
+Monte um relatório executivo unindo métricas, curva MSC, tabela de features e
+imagens (PNG) usando `export xlsx`:
+
+```bash
+python -m ogum_lite.cli export xlsx \
+  --out reports/ogum_report.xlsx \
+  --msc exports/msc_curve.csv \
+  --features exports/features.csv \
+  --metrics artifacts/cls_technique/model_card.json \
+  --dataset "Campanha Ogum 2024" \
+  --notes "Resultados finais após tuning" \
+  --img-msc figures/msc.png \
+  --img-cls figures/confusion.png \
+  --img-reg figures/regression.png
+```
+
+O arquivo final contém abas **Summary**, **MSC**, **Features** e **Metrics** com
+metadados (dataset, timestamps, melhores métricas) e imagens opcionais.
+
 ## ML (Fase 3)
 
 Os comandos abaixo fecham o ciclo dados → features → ML com validação
@@ -223,6 +265,47 @@ Checklist rápido de boas práticas:
    (experimento, data, analista) direto no `report.html` e no `model_card`.
 4. **Reprodutibilidade**: fixe `--random-state` quando comparar execuções ou
    compartilhar notebooks/artefatos com terceiros.
+
+## Docker
+
+Para empacotar a CLI/UI em um contêiner leve:
+
+```bash
+docker build -t ogum-ml:latest -f docker/Dockerfile .
+docker run --rm -v "$PWD":/work ogum-ml:latest --help
+```
+
+O contêiner inicia com `python -m ogum_lite.cli` como entrypoint; basta montar o
+diretório com dados e escolher o subcomando desejado (`ui`, `msc`, `ml ...`).
+
+## Release e distribuição
+
+O workflow `release.yml` empacota a wheel e publica ativos extras sempre que uma
+tag `v*` é enviada ao repositório remoto:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+Além da wheel (`dist/*.whl`), arquivos em `artifacts/**` são anexados à Release.
+
+## Export ONNX (opcional)
+
+Para gerar modelos compatíveis com inferência embarcada, instale as dependências
+opcionais e use o novo comando:
+
+```bash
+pip install skl2onnx onnxmltools
+
+python -m ogum_lite.cli export onnx \
+  --model artifacts/cls_technique/classifier_tuned.joblib \
+  --features-json artifacts/cls_technique/feature_cols.json \
+  --out artifacts/cls_technique/model.onnx
+```
+
+Se as dependências não estiverem instaladas ou o estimador não for um
+`RandomForest*`, o comando é ignorado com um aviso (código de saída 0).
 
 ## Fluxo em Colab
 
