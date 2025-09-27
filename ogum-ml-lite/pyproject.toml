@@ -18,8 +18,21 @@ dependencies = [
     "joblib",
     "gradio",
     "openpyxl",
+    "pydantic",
     "xlrd",
 ]
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/huyraestevao/ogum-ml"
+Repository = "https://github.com/huyraestevao/ogum-ml"
+Issues = "https://github.com/huyraestevao/ogum-ml/issues"
 
 [project.optional-dependencies]
 dev = [
