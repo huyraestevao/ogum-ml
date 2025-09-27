@@ -84,6 +84,18 @@ def _dict_to_html_list(data: dict[str, Any]) -> str:
     return "\n".join(items)
 
 
+def _table_to_html(table: Any) -> str:
+    if isinstance(table, pd.DataFrame):
+        return table.to_html(index=False, classes="table", border=0)
+    if isinstance(table, list):
+        if table and isinstance(table[0], dict):
+            return pd.DataFrame(table).to_html(index=False, classes="table", border=0)
+        return pd.DataFrame(table).to_html(index=False, classes="table", border=0)
+    if isinstance(table, dict):
+        return pd.DataFrame([table]).to_html(index=False, classes="table", border=0)
+    return ""
+
+
 def render_html_report(outdir: Path, context: dict, figures: dict[str, bytes]) -> Path:
     """Generate an HTML report embedding PNG figures as base64 images."""
 
@@ -107,6 +119,29 @@ def render_html_report(outdir: Path, context: dict, figures: dict[str, bytes]) -
     features = context.get("features", [])
     timestamp = context.get("timestamp", "")
     observations = context.get("observations", "")
+    segments_table = context.get("segments_table")
+    segments_summary = context.get("segments_summary", {})
+
+    segments_summary_html = ""
+    if isinstance(segments_summary, dict):
+        segments_summary_html = "<ul>" + _dict_to_html_list(segments_summary) + "</ul>"
+    elif isinstance(segments_summary, list):
+        items = "".join(
+            f"<li>{item}</li>" for item in segments_summary
+        )
+        segments_summary_html = f"<ul>{items}</ul>"
+
+    segments_table_html = _table_to_html(segments_table)
+    segments_section = ""
+    if segments_summary_html or segments_table_html:
+        table_html = segments_table_html or "<p>No segmentation table provided.</p>"
+        segments_section = f"""
+        <section>
+          <h2>Segmentation</h2>
+          {segments_summary_html}
+          {table_html}
+        </section>
+        """
 
     html = f"""
     <!DOCTYPE html>
@@ -130,6 +165,16 @@ def render_html_report(outdir: Path, context: dict, figures: dict[str, bytes]) -
             background-color: #f5f5f5;
             padding: 0.2rem 0.4rem;
             border-radius: 3px;
+          }}
+          table {{
+            border-collapse: collapse;
+            margin: 1rem 0;
+            width: 100%;
+          }}
+          th, td {{
+            border: 1px solid #ddd;
+            padding: 0.5rem;
+            text-align: left;
           }}
         </style>
       </head>
@@ -171,6 +216,7 @@ def render_html_report(outdir: Path, context: dict, figures: dict[str, bytes]) -
           <h2>Observations</h2>
           <p>{observations}</p>
         </section>
+        {segments_section}
         <section>
           <h2>Figures</h2>
           {''.join(figure_entries)}

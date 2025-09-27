@@ -11,6 +11,11 @@ from .features import (
     segment_feature_table,
     theta_features,
 )
+from .maps import (
+    prepare_segment_heatmap,
+    render_segment_heatmap,
+    save_heatmap,
+)
 from .mechanism import detect_mechanism_change
 from .ml_hooks import (
     kmeans_explore,
@@ -42,7 +47,10 @@ __all__ = [
     "build_master_curve",
     "finite_diff",
     "kmeans_explore",
+    "prepare_segment_heatmap",
     "predict_from_artifact",
+    "render_segment_heatmap",
+    "save_heatmap",
     "segment_dataframe",
     "segment_feature_table",
     "score_activation_energies",
