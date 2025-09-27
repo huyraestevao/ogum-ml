@@ -1,0 +1,38 @@
+columns:
+  group_col: sample_id
+  t_col: time_s
+  temp_col: temp_C
+  y_col: rho_rel
+prep:
+  enabled: true
+  smooth: savgol
+  window: 11
+  poly: 3
+  moving_k: 5
+  output: prep/ensaios_prep.csv
+msc:
+  ea_kj: [200, 300, 400]
+  metric: segmented
+  outdir: theta_msc
+segmentation:
+  mode: fixed
+  bounds:
+    - "0.55,0.70"
+    - "0.70,0.90"
+  output: segments/segments.json
+ml:
+  features:
+    - heating_rate_med_C_per_s
+    - T_max_C
+    - y_final
+    - t_to_90pct_s
+    - theta_Ea_200kJ
+    - theta_Ea_300kJ
+  cls_target: technique
+  reg_target: T90_C
+  cls_outdir: ml/classifier
+  reg_outdir: ml/regressor
+export:
+  outdir: artifacts/session-{{timestamp}}
+  report: reports/ogum_report.xlsx
+  zip: exports/session_artifacts.zip

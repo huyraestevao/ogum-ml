@@ -30,6 +30,45 @@ de usar em Google Colab e pronto para integrações com pipelines de ML.
 - **Pronto para ML**: módulo `features` com engenharia global e stage-aware,
   integração com `theta_msc` e `ml_hooks` para pipelines supervisionados.
 
+## Frontend Alpha (Fase 7)
+
+Esta fase adiciona um frontend interativo completo para executar o pipeline
+Ogum Lite de ponta a ponta em dados reais.
+
+### Streamlit (painel principal)
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+O painel está organizado em abas que refletem o fluxo recomendado:
+
+1. **Workspace & Presets** – escolha o diretório base da sessão, carregue/edite
+   presets YAML e acompanhe o log de proveniência (`run_log.jsonl`).
+2. **Data Prep & Validate** – faça upload de CSV longos, execute validação com
+   `validators.validate_long_df` e acione `preprocess derive` via CLI.
+3. **Features** – derive a tabela de features, valide-a e visualize as primeiras
+   linhas diretamente no app.
+4. **θ / MSC** – compute θ(Ea), gere o colapso MSC (CSV/PNG) e baixe o pacote
+   de curvas `theta_curves.zip`.
+5. **Segmentação & Mecanismo** – rode segmentação (fixed/data) e o relatório de
+   mudança de mecanismo (Blaine/n) reaproveitando os módulos centrais.
+6. **ML** – treine classificadores/regressores, inspeccione o `model_card.json`
+   e gere predições usando artefatos do workspace.
+7. **Export** – consolide um relatório XLSX (`export xlsx`) e baixe um ZIP com
+   todos os artefatos da sessão.
+
+O preset padrão fica em `app/presets.yaml` e pode ser salvo/mesclado via UI.
+
+### Gradio (alternativa leve)
+
+```bash
+python app/gradio_app.py
+```
+
+O modo Gradio expõe um formulário compacto (upload → preset → executar) que
+orquestra os mesmos comandos CLI e disponibiliza o ZIP consolidado.
+
 ## Instalação
 
 ```bash
