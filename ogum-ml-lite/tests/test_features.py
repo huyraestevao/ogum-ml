@@ -97,6 +97,8 @@ def test_build_feature_store_stage_columns_present() -> None:
         suffix = f"_s{idx}"
         assert any(column.endswith(suffix) for column in feature_store.columns)
     assert "Ea_arr_global_kJ" in feature_store.columns
+    assert any(column.startswith("fixed_seg1") for column in feature_store.columns)
+    assert "fixed_seg1_blaine_n" in feature_store.columns
 
 
 def test_theta_features_and_feature_table() -> None:
