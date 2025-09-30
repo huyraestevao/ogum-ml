@@ -28,17 +28,23 @@ app = FastAPI(title="Ogum ML Lite API", version="0.1.0")
 def _records_to_dataframe(records: Sequence[Dict[str, Any]]) -> pd.DataFrame:
     dataframe = pd.DataFrame(records or [])
     if dataframe.empty:
-        raise HTTPException(status_code=400, detail="data must contain at least one record")
+        raise HTTPException(
+            status_code=400, detail="data must contain at least one record"
+        )
     return dataframe
 
 
-def _parse_stages(stages: Sequence[Sequence[float]] | None) -> list[tuple[float, float]] | None:
+def _parse_stages(
+    stages: Sequence[Sequence[float]] | None,
+) -> list[tuple[float, float]] | None:
     if stages is None:
         return None
     parsed: list[tuple[float, float]] = []
     for item in stages:
         if len(item) != 2:
-            raise HTTPException(status_code=400, detail="Stage definitions must contain two values")
+            raise HTTPException(
+                status_code=400, detail="Stage definitions must contain two values"
+            )
         lower, upper = float(item[0]), float(item[1])
         parsed.append((lower, upper))
     return parsed
@@ -54,7 +60,8 @@ def _load_json(path: Path) -> Any:
 
 def _result_to_payload(result: MasterCurveResult) -> dict[str, Any]:
     segment_metrics = {
-        f"{lower:.2f}-{upper:.2f}": value for (lower, upper), value in result.segment_mse.items()
+        f"{lower:.2f}-{upper:.2f}": value
+        for (lower, upper), value in result.segment_mse.items()
     }
     return {
         "activation_energy": result.activation_energy,
@@ -69,12 +76,16 @@ def _load_model(encoded: str) -> Any:
     try:
         buffer = BytesIO(base64.b64decode(encoded))
     except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=400, detail="Invalid base64 model payload") from exc
+        raise HTTPException(
+            status_code=400, detail="Invalid base64 model payload"
+        ) from exc
     buffer.seek(0)
     try:
         return joblib.load(buffer)
     except Exception as exc:  # pragma: no cover - defensive
-        raise HTTPException(status_code=400, detail="Unable to load serialized model") from exc
+        raise HTTPException(
+            status_code=400, detail="Unable to load serialized model"
+        ) from exc
 
 
 class PrepRequest(BaseModel):
@@ -233,7 +244,11 @@ def segmentation(request: SegmentationRequest) -> dict[str, Any]:
         t_col=request.time_column,
         y_col=request.y_column,
         method=request.method,
-        thresholds=tuple(request.thresholds) if request.thresholds is not None else (0.55, 0.70, 0.90),
+        thresholds=(
+            tuple(request.thresholds)
+            if request.thresholds is not None
+            else (0.55, 0.70, 0.90)
+        ),
         n_segments=request.n_segments,
         min_size=request.min_size,
     )
@@ -261,13 +276,19 @@ def mechanism(request: MechanismRequest) -> dict[str, Any]:
 @app.post("/ml/train")
 def ml_train(request: TrainRequest) -> dict[str, Any]:
     df = _records_to_dataframe(request.data)
-    feature_cols = list(request.feature_cols) if request.feature_cols else [
-        col for col in df.columns if col not in {request.target, request.group_col}
-    ]
+    feature_cols = (
+        list(request.feature_cols)
+        if request.feature_cols
+        else [
+            col for col in df.columns if col not in {request.target, request.group_col}
+        ]
+    )
     missing = [col for col in feature_cols if col not in df.columns]
     if missing:
         missing_cols = ", ".join(sorted(missing))
-        raise HTTPException(status_code=400, detail=f"Missing feature columns: {missing_cols}")
+        raise HTTPException(
+            status_code=400, detail=f"Missing feature columns: {missing_cols}"
+        )
 
     with TemporaryDirectory() as tmpdir:
         outdir = Path(tmpdir)
@@ -290,7 +311,9 @@ def ml_train(request: TrainRequest) -> dict[str, Any]:
 
         artifacts = result.get("artifacts", {})
         model_path = Path(artifacts.get("model", outdir / "model.joblib"))
-        feature_cols_path = Path(artifacts.get("feature_cols", outdir / "feature_cols.json"))
+        feature_cols_path = Path(
+            artifacts.get("feature_cols", outdir / "feature_cols.json")
+        )
         target_path = Path(artifacts.get("target", outdir / "target.json"))
         model_card_path = Path(artifacts.get("model_card", outdir / "model_card.json"))
 
@@ -314,7 +337,9 @@ def ml_predict(request: PredictRequest) -> dict[str, Any]:
     missing = [col for col in request.feature_cols if col not in df.columns]
     if missing:
         missing_cols = ", ".join(sorted(missing))
-        raise HTTPException(status_code=400, detail=f"Missing feature columns: {missing_cols}")
+        raise HTTPException(
+            status_code=400, detail=f"Missing feature columns: {missing_cols}"
+        )
 
     X = df[list(request.feature_cols)]
     predictions = model.predict(X)

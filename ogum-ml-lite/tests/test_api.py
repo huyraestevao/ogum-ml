@@ -1,7 +1,5 @@
 from fastapi.testclient import TestClient
-
 from ogum_lite.api.main import app
-
 
 client = TestClient(app)
 

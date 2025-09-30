@@ -45,7 +45,9 @@ class BlaineResult:
         }
 
 
-def _linearise_blaine(time_s: np.ndarray, y: np.ndarray) -> tuple[float, float, float, float]:
+def _linearise_blaine(
+    time_s: np.ndarray, y: np.ndarray
+) -> tuple[float, float, float, float]:
     mask = (time_s > 0) & (y > 0) & (y < 1)
     if mask.sum() < 2:
         return (float("nan"),) * 4

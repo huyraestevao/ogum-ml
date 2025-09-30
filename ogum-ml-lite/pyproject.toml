@@ -18,6 +18,9 @@ dependencies = [
     "joblib",
     "gradio",
     "streamlit",
+    "plotly",
+    "tenacity",
+    "typing_extensions",
     "openpyxl",
     "pydantic",
     "fastapi",
@@ -47,7 +50,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["ogum_lite"]
+include = ["ogum_lite", "app"]
 
 [tool.black]
 line-length = 88

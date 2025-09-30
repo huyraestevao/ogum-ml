@@ -14,12 +14,15 @@ msc:
   ea_kj: [200, 300, 400]
   metric: segmented
   outdir: theta_msc
+  img_msc: theta_msc/msc_plot.png
 segmentation:
   mode: fixed
   bounds:
     - "0.55,0.70"
     - "0.70,0.90"
   output: segments/segments.json
+mechanism:
+  output: mechanism/mechanism.csv
 ml:
   features:
     - heating_rate_med_C_per_s
@@ -32,6 +35,7 @@ ml:
   reg_target: T90_C
   cls_outdir: ml/classifier
   reg_outdir: ml/regressor
+  predict_output: ml/predictions.csv
 export:
   outdir: artifacts/session-{{timestamp}}
   report: reports/ogum_report.xlsx

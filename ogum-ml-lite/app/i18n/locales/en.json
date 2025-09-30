@@ -1,0 +1,43 @@
+{
+  "app": {
+    "title": "Ogum-ML Console",
+    "subtitle": "Evolutionary frontend"
+  },
+  "menu": {
+    "prep": "Prep & Validate",
+    "features": "Features",
+    "msc": "θ & MSC",
+    "segments": "Segmentation",
+    "mechanism": "Mechanism",
+    "ml": "ML Models",
+    "export": "Export"
+  },
+  "workspace": {
+    "title": "Workspace",
+    "path_label": "Session directory",
+    "preset_label": "Preset YAML",
+    "apply_preset": "Apply",
+    "restore": "Restore default",
+    "load_file": "Load preset",
+    "log_tail": "Recent events"
+  },
+  "actions": {
+    "validate": "Validate",
+    "run": "Run",
+    "download": "Download",
+    "refresh": "Refresh",
+    "train": "Train",
+    "predict": "Predict",
+    "export": "Export",
+    "toggle_dark": "Dark mode",
+    "toggle_light": "Light mode"
+  },
+  "messages": {
+    "ready": "[ok] ready",
+    "no_artifacts": "[warn] No artifacts available",
+    "workspace_changed": "[ok] Workspace updated",
+    "preset_applied": "[ok] Preset updated",
+    "validation_ok": "[ok] File validated",
+    "validation_failed": "[warn] Issues detected"
+  }
+}

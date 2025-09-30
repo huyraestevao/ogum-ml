@@ -129,7 +129,9 @@ def detect_mechanism_change(
             )
             continue
 
-        base_model = fit_piecewise_linear(theta_values, densification, 1, min_size=min_size)
+        base_model = fit_piecewise_linear(
+            theta_values, densification, 1, min_size=min_size
+        )
         if base_model is None:
             records.append(
                 {
@@ -191,12 +193,16 @@ def detect_mechanism_change(
                 "n_segments": best_model.n_segments,
                 "criterion": best_model.criterion,
                 "baseline_criterion": best_model.baseline_criterion,
-                "breakpoint_theta": best_model.breakpoint_theta
-                if best_model.breakpoint_theta is not None
-                else float("nan"),
-                "breakpoint_densification": best_model.breakpoint_densification
-                if best_model.breakpoint_densification is not None
-                else float("nan"),
+                "breakpoint_theta": (
+                    best_model.breakpoint_theta
+                    if best_model.breakpoint_theta is not None
+                    else float("nan")
+                ),
+                "breakpoint_densification": (
+                    best_model.breakpoint_densification
+                    if best_model.breakpoint_densification is not None
+                    else float("nan")
+                ),
             }
         )
 

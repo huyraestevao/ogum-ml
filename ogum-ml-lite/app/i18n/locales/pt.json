@@ -1,0 +1,43 @@
+{
+  "app": {
+    "title": "Ogum-ML Painel",
+    "subtitle": "Frontend evolutivo"
+  },
+  "menu": {
+    "prep": "Preparar & Validar",
+    "features": "Features",
+    "msc": "θ & MSC",
+    "segments": "Segmentação",
+    "mechanism": "Mecanismo",
+    "ml": "Modelos ML",
+    "export": "Exportar"
+  },
+  "workspace": {
+    "title": "Workspace",
+    "path_label": "Diretório da sessão",
+    "preset_label": "Preset YAML",
+    "apply_preset": "Aplicar",
+    "restore": "Restaurar padrão",
+    "load_file": "Carregar preset",
+    "log_tail": "Últimos eventos"
+  },
+  "actions": {
+    "validate": "Validar",
+    "run": "Executar",
+    "download": "Download",
+    "refresh": "Atualizar",
+    "train": "Treinar",
+    "predict": "Predizer",
+    "export": "Exportar",
+    "toggle_dark": "Modo escuro",
+    "toggle_light": "Modo claro"
+  },
+  "messages": {
+    "ready": "[ok] pronto",
+    "no_artifacts": "[warn] Sem artefatos disponíveis",
+    "workspace_changed": "[ok] Workspace atualizado",
+    "preset_applied": "[ok] Preset atualizado",
+    "validation_ok": "[ok] Arquivo validado",
+    "validation_failed": "[warn] Problemas encontrados"
+  }
+}

@@ -239,7 +239,9 @@ def segment_feature_table(
         y_col=y_col,
     )
 
-    feature_map: dict[str | int | float, dict[str, float | int | str]] = defaultdict(dict)
+    feature_map: dict[str | int | float, dict[str, float | int | str]] = defaultdict(
+        dict
+    )
 
     for segment, blaine in zip(segments, blaine_results):
         sample_key = segment.sample_id
@@ -445,7 +447,9 @@ def build_feature_store(
         y_col=y_col,
     )
 
-    thresholds = segment_thresholds if segment_thresholds is not None else (0.55, 0.70, 0.90)
+    thresholds = (
+        segment_thresholds if segment_thresholds is not None else (0.55, 0.70, 0.90)
+    )
     segment_table = segment_feature_table(
         derived,
         method=segment_method,
