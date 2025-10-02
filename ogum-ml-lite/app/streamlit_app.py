@@ -16,10 +16,12 @@ from app.pages import (
     page_msc,
     page_prep,
     page_segments,
+    page_wizard,
 )
 from app.services import state
 
 PAGES: dict[str, tuple[str, Callable[[I18N], None]]] = {
+    "wizard": ("menu.wizard", page_wizard.render),
     "prep": ("menu.prep", page_prep.render),
     "features": ("menu.features", page_features.render),
     "msc": ("menu.msc", page_msc.render),

@@ -1,0 +1,85 @@
+wizard:
+  title: Modo guiado
+  intro: Execute o pipeline completo passo a passo.
+  actions:
+    previous: Voltar
+    next: Avançar
+    run_step: Rodar etapa
+    open_artifact: Abrir artefatos
+  tooltips:
+    data: Carregue ou selecione um CSV existente e valide antes de preparar.
+    features: Gere features a partir do CSV preparado ou reaproveite um arquivo custom.
+    msc: Execute θ/MSC escolhendo a métrica de colapso preferida.
+    segments: Calcule segmentação e Blaine; escolha modo fixo ou data-driven.
+    mechanism: Analise mudança de mecanismo com τ e R².
+    ml: Treine modelos de classificação ou regressão e, se quiser, gere predições.
+    export: Finalize exportando relatório e pacote ZIP da sessão.
+  steps:
+    data:
+      title: Dados
+      description: Selecione, valide e prepare o dataset base.
+    features:
+      title: Features
+      description: Construa features globais ou reprocessadas.
+    msc:
+      title: θ & MSC
+      description: Avalie colapso da curva e métricas Ea.
+    segments:
+      title: Segmentação & Blaine
+      description: Gere segmentação fixa ou orientada por dados.
+    mechanism:
+      title: Mecanismo
+      description: Relatório de mudança de mecanismo por amostra.
+    ml:
+      title: ML
+      description: Treine modelos e opcionalmente gere predições.
+    export:
+      title: Exportar
+      description: Monte o relatório final e o pacote ZIP.
+  focus_hint: Use Tab/Shift+Tab para navegar e Enter para acionar botões.
+  blockers:
+    need_prep: '[warn] Gere o CSV preparado antes de avançar.'
+    need_features: '[warn] Gere o arquivo de features para continuar.'
+    need_theta: '[warn] Rode θ/MSC para liberar este passo.'
+    need_segments: '[warn] Execute a segmentação primeiro.'
+    need_mechanism: '[warn] Rode mecanismo antes de treinar ML.'
+    need_ml: '[warn] Treine um modelo antes de exportar.'
+  features:
+    use_prep: Usar prep.csv como entrada
+microcopy:
+  select_csv: Selecione o CSV
+  upload_csv: Enviar CSV
+  validate_data: Validar dados
+  run_prep: Preparar dados
+  run_features: Gerar features
+  run_msc: Executar MSC
+  run_segments: Gerar segmentação
+  run_mechanism: Rodar mecanismo
+  run_ml_cls: Treinar classificação
+  run_ml_reg: Treinar regressão
+  run_ml_predict: Gerar predições
+  run_export: Gerar exportação
+  prep_ready: '[ok] Dados preparados'
+  validation_ok: '[ok] Dados validados com sucesso'
+  validation_warn: '[warn] Validação encontrou avisos'
+  features_ready: '[ok] Features disponíveis'
+  msc_ready: '[ok] θ/MSC atualizado'
+  segments_ready: '[ok] Segmentação salva'
+  mechanism_ready: '[ok] Relatório de mecanismo salvo'
+  ml_ready: '[ok] Artefatos de ML gerados'
+  predict_ready: '[ok] Predições prontas'
+  export_ready: '[ok] Relatório e ZIP atualizados'
+  missing_artifact: '[warn] Nenhum artefato disponível'
+  spinner_prep: Executando preparação...
+  spinner_features: Gerando features...
+  spinner_msc: Executando θ/MSC...
+  spinner_segments: Calculando segmentação...
+  spinner_mechanism: Calculando mecanismo...
+  spinner_ml: Treinando modelo...
+  spinner_predict: Gerando predições...
+  spinner_export: Montando exportação...
+  focus_primary: 'Foco nesta etapa: revise resultados antes de avançar.'
+  describe_msc: 'MSC: curva média com faixa ±1σ.'
+  describe_segments: 'Segmentos: tabela com frações por estágio.'
+  describe_mechanism: 'Mecanismo: relatório com τ, R² e limiares detectados.'
+  describe_ml: 'ML: métricas de validação cruzada por modelo.'
