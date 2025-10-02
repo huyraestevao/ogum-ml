@@ -793,3 +793,89 @@ pytest -q tests/test_auth.py tests/test_server_api.py
 ```
 
 Os testes criam storage temporário, validam login, listagem de runs, upload e registro de simulação.
+
+## Fase 16 — Publicação Científica (Zenodo/Figshare)
+
+### Tokens e variáveis de ambiente
+
+- Crie um token pessoal no [Zenodo](https://zenodo.org/account/settings/applications/tokens/new/)
+  (ou sandbox) e outro no [Figshare](https://figshare.com/account/applications).
+- Copie-os para um arquivo `.env` baseado em [`.env.example`](../.env.example) ou
+  para os segredos do ambiente onde o Ogum-ML roda:
+
+  ```bash
+  export ZENODO_TOKEN=seu_token
+  export FIGSHARE_TOKEN=seu_token
+  # Opcional: usar sandbox
+  export ZENODO_BASE=https://sandbox.zenodo.org/api
+  ```
+
+### Metadados canônicos
+
+Crie um YAML (ex.: `docs/publish_meta.yaml`) com autores, licença e demais
+campos exigidos pelos repositórios:
+
+```yaml
+title: "Ogum Lite — Execução 2025-10-01"
+description: |
+  Resultados completos (artefatos, relatórios e modelos) para reprodução.
+version: "v0.3.0"
+authors:
+  - name: "Alice Doe"
+    affiliation: "Ogum Research Lab"
+    orcid: "0000-0002-1825-0097"
+keywords: ["sintering", "ogum", "ml"]
+license: "CC-BY-4.0"
+funding: ["CNPq-1234"]
+related_identifiers:
+  - identifier: "10.5281/zenodo.1234567"
+    relation: "isSupplementTo"
+upload_files:
+  - docs/paper_preprint.pdf
+community: "open-science"
+category: "dataset"
+```
+
+### Fluxo CLI
+
+1. **Preparar bundle** (gera `bundle.zip`, checksum e `publish_manifest.json`):
+
+   ```bash
+   python -m ogum_lite.cli publish prepare \
+     --run-dir artifacts/run_2025_10_01 \
+     --meta docs/publish_meta.yaml \
+     --outdir artifacts/publish/run_2025_10_01
+   ```
+
+2. **Publicar no Zenodo** (usa `ZENODO_TOKEN`/`ZENODO_BASE`):
+
+   ```bash
+   python -m ogum_lite.cli publish zenodo \
+     --bundle artifacts/publish/run_2025_10_01
+   ```
+
+3. **Publicar no Figshare** (usa `FIGSHARE_TOKEN`/`FIGSHARE_BASE`):
+
+   ```bash
+   python -m ogum_lite.cli publish figshare \
+     --bundle artifacts/publish/run_2025_10_01
+   ```
+
+4. **Consultar recibos (DOI/URL)**:
+
+   ```bash
+   python -m ogum_lite.cli publish status \
+     --bundle artifacts/publish/run_2025_10_01
+   ```
+
+Os recibos (`zenodo_receipt.json`, `figshare_receipt.json`) ficam ao lado do
+bundle e podem ser versionados junto com o projeto.
+
+### Versionamento e citação
+
+- No Zenodo, use **New version** para atualizar um DOI existente mantendo o
+  `conceptdoi`; use **New deposition** para coleções independentes.
+- No Figshare, crie uma nova versão diretamente a partir do artigo
+  publicado para preservar o histórico.
+- Inclua o DOI nas capas de relatório, dashboards e no `model_card.json`
+  gerado pelo pipeline para manter o rastro de citação.
