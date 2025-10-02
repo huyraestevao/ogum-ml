@@ -4,6 +4,11 @@ columns:
     - time_s
     - temp_C
     - rho_rel
+technique_profile:
+  name: Conventional
+  heating_rate_c_per_min: 10
+  atmosphere: Air
+  notes: Ciclo padrão em forno resistivo com patamar final.
 msc:
   ea_kj:
     - 200

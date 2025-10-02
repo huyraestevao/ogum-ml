@@ -6,10 +6,10 @@ import argparse
 import json
 import tempfile
 import zipfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Iterable, List, Literal, Sequence
 
 import gradio as gr
 import joblib
@@ -29,6 +29,7 @@ from .exporters import export_onnx, export_xlsx
 from .features import arrhenius_feature_table, build_feature_store, build_feature_table
 from .io_mapping import (
     TECHNIQUE_CHOICES,
+    TECHNIQUE_PROFILES,
     ColumnMap,
     apply_mapping,
     infer_mapping,
@@ -46,14 +47,14 @@ from .ml_hooks import (
     train_classifier,
     train_regressor,
 )
-from .preprocess import derive_all
+from .preprocess import convert_response, derive_all
 from .reports import (
     plot_confusion_matrix,
     plot_feature_importance,
     plot_regression_scatter,
     render_html_report,
 )
-from .segmentation import segment_dataframe
+from .segmentation import aggregate_max_rate_bounds, segment_dataframe
 from .stages import DEFAULT_STAGES
 from .theta_msc import OgumLite, score_activation_energies
 from .validators import validate_feature_df, validate_long_df
@@ -68,6 +69,32 @@ def parse_ea_list(raw: str) -> List[float]:
         raise argparse.ArgumentTypeError(
             "Activation energies must be numeric."
         ) from exc
+
+
+def parse_ea_range(raw: str) -> List[float]:
+    """Parse activation energy ranges in the form ``start:end:step``."""
+
+    try:
+        start_str, end_str, step_str = raw.split(":", 2)
+        start = float(start_str)
+        end = float(end_str)
+        step = float(step_str)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise argparse.ArgumentTypeError(
+            "Ea range must be provided as start:end:step"
+        ) from exc
+    if step <= 0:
+        raise argparse.ArgumentTypeError("Ea range step must be positive")
+    if end <= start:
+        raise argparse.ArgumentTypeError("Ea range end must be greater than start")
+
+    values: List[float] = []
+    current = start
+    # Protect against floating point drift by iterating up to an inclusive bound
+    while current <= end + 1e-9:
+        values.append(round(current, 6))
+        current += step
+    return values
 
 
 def parse_stage_ranges(raw: str | None) -> list[tuple[float, float]]:
@@ -132,6 +159,38 @@ def parse_thresholds(raw: str | None) -> Sequence[float]:
     return tuple(values)
 
 
+def resolve_stage_segments(
+    dataframe: pd.DataFrame,
+    *,
+    segmentation_mode: Literal["fixed", "max-rate"] = "fixed",
+    stage_text: str | None = None,
+    group_col: str = "sample_id",
+    t_col: str = "time_s",
+    y_col: str = "rho_rel",
+    n_segments: int = 3,
+    min_size: int = 5,
+) -> list[tuple[float, float]]:
+    """Resolve densification segments based on CLI parameters."""
+
+    if segmentation_mode == "fixed":
+        return parse_stage_ranges(stage_text)
+    if segmentation_mode == "max-rate":
+        bounds = aggregate_max_rate_bounds(
+            dataframe,
+            group_col=group_col,
+            t_col=t_col,
+            y_col=y_col,
+            n_segments=n_segments,
+            min_size=min_size,
+        )
+        if not bounds:
+            raise ValueError(
+                "Unable to derive max-rate bounds. Provide cleaner data or adjust min_size."
+            )
+        return bounds
+    raise ValueError("segmentation_mode must be 'fixed' or 'max-rate'")
+
+
 def _mapping_from_json(path: Path) -> ColumnMap:
     data = json.loads(Path(path).read_text())
     return ColumnMap(**data)
@@ -149,6 +208,7 @@ def _edit_mapping(mapping: ColumnMap, df: pd.DataFrame) -> ColumnMap:
     print("Available columns:")
     print("  " + ", ".join(columns))
     print("Technique options: " + ", ".join(TECHNIQUE_CHOICES))
+    print("Text fields: composition_default, technique_default, tech_comment, user, timestamp")
 
     while True:
         try:
@@ -172,6 +232,26 @@ def _edit_mapping(mapping: ColumnMap, df: pd.DataFrame) -> ColumnMap:
             if value not in {"C", "K"}:
                 print("temp_unit must be 'C' or 'K'")
                 continue
+        elif field in {"composition_default", "tech_comment", "user", "timestamp"}:
+            current[field] = value
+            continue
+        elif field == "technique_default":
+            if value not in TECHNIQUE_CHOICES:
+                print("technique_default must match one of the predefined choices")
+                continue
+            current[field] = value
+            continue
+        elif field == "extra_metadata":
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                print("extra_metadata must be a valid JSON object")
+                continue
+            if not isinstance(parsed, dict):
+                print("extra_metadata JSON must represent an object")
+                continue
+            current[field] = parsed
+            continue
         elif field == "technique":
             if value not in TECHNIQUE_CHOICES and value not in columns:
                 print(
@@ -312,9 +392,50 @@ def cmd_ml_features(args: argparse.Namespace) -> None:
 
 def cmd_io_map(args: argparse.Namespace) -> None:
     df = read_table(str(args.input))
-    mapping = infer_mapping(df)
+
+    if args.default_technique and args.default_technique not in TECHNIQUE_CHOICES:
+        raise SystemExit(
+            "--default-technique must be one of: " + ", ".join(TECHNIQUE_CHOICES)
+        )
+
+    timestamp = args.timestamp
+    if args.user and timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+    mapping = infer_mapping(
+        df,
+        default_composition=args.default_composition,
+        default_technique=args.default_technique,
+        tech_comment=args.tech_comment,
+        user=args.user,
+        timestamp=timestamp,
+    )
     if args.edit:
         mapping = _edit_mapping(mapping, df)
+
+    updates: dict[str, object] = {}
+    if args.tech_comment is not None:
+        updates["tech_comment"] = args.tech_comment
+    if args.user is not None:
+        updates["user"] = args.user
+    if timestamp is not None:
+        updates["timestamp"] = timestamp
+    if args.default_composition is not None:
+        updates.setdefault("composition_default", args.default_composition)
+    if args.default_technique is not None:
+        updates.setdefault("technique_default", args.default_technique)
+    if updates:
+        mapping = replace(mapping, **updates)
+
+    if mapping.technique is None and mapping.technique_default:
+        profile = TECHNIQUE_PROFILES.get(mapping.technique_default)
+        if profile:
+            extra = dict(mapping.extra_metadata)
+            for key, value in profile.items():
+                if key == "name":
+                    continue
+                extra[f"tech_{key}"] = str(value)
+            mapping = replace(mapping, extra_metadata=extra)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(asdict(mapping), indent=2))
@@ -325,12 +446,23 @@ def cmd_preprocess_derive(args: argparse.Namespace) -> None:
     df = read_table(str(args.input))
     mapping = _mapping_from_json(args.map)
     mapped = apply_mapping(df, mapping)
+    response = convert_response(
+        mapped,
+        column="rho_rel",
+        response_type=args.response_type,
+        L0=args.L0,
+        rho0=args.rho0,
+    )
+    mapped["rho_rel"] = response
+    mapped["response"] = response
+    mapped["y"] = response
     derived = derive_all(
         mapped,
         smooth=args.smooth,
         window=args.window,
         poly=args.poly,
         moving_k=args.moving_k,
+        y_col="rho_rel",
     )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -342,8 +474,6 @@ def cmd_preprocess_derive(args: argparse.Namespace) -> None:
 
 def cmd_arrhenius_fit(args: argparse.Namespace) -> None:
     df = pd.read_csv(args.input)
-    stages = parse_stage_ranges(args.stages)
-
     if "dy_dt" not in df.columns:
         df = derive_all(
             df,
@@ -355,6 +485,20 @@ def cmd_arrhenius_fit(args: argparse.Namespace) -> None:
             poly=args.poly,
             moving_k=args.moving_k,
         )
+
+    try:
+        stages = resolve_stage_segments(
+            df,
+            segmentation_mode=args.segmentation_mode,
+            stage_text=args.stages,
+            group_col=args.group_col,
+            t_col=args.time_column,
+            y_col=args.y_column,
+            n_segments=args.segments,
+            min_size=args.min_size,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     arrhenius_table = arrhenius_feature_table(
         df,
@@ -790,16 +934,42 @@ def cmd_theta(args: argparse.Namespace) -> None:
 def cmd_msc(args: argparse.Namespace) -> None:
     dataframe = pd.read_csv(args.input)
     normalize_theta = None if args.normalize_theta == "none" else args.normalize_theta
+    try:
+        segments = resolve_stage_segments(
+            dataframe,
+            segmentation_mode=args.segmentation_mode,
+            stage_text=args.stages,
+            group_col=args.group_col,
+            t_col=args.time_column,
+            y_col=args.y_column,
+            n_segments=args.segments,
+            min_size=args.min_size,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if args.segmentation_mode == "max-rate":
+        bounds_text = ", ".join(f"{lower:.3f}-{upper:.3f}" for lower, upper in segments)
+        print(f"Max-rate segments: {bounds_text}")
+
+    ea_values: list[float] = []
+    if args.ea:
+        ea_values.extend(args.ea)
+    if args.ea_range:
+        ea_values.extend(args.ea_range)
+    if not ea_values:
+        raise SystemExit("Provide --ea or --ea-range to evaluate MSC")
+    ea_values = sorted({float(value) for value in ea_values})
 
     summary, best_result, _ = score_activation_energies(
         dataframe,
-        args.ea,
+        ea_values,
         metric=args.metric,
         group_col=args.group_col,
         t_col=args.time_column,
         temp_col=args.temperature_column,
         y_col=args.y_column,
         normalize_theta=normalize_theta,
+        segments=segments,
     )
 
     print(summary.to_string(index=False))
@@ -810,6 +980,33 @@ def cmd_msc(args: argparse.Namespace) -> None:
             best_result.mse_segmented,
         )
     )
+
+    auto_enabled = args.auto_ea or args.auto_ea_plot is not None
+    if auto_enabled:
+        metric_key = "mse_segmented" if args.metric == "segmented" else "mse_global"
+        if metric_key not in summary.columns:
+            raise SystemExit("Summary does not contain the selected metric")
+        best_idx = summary[metric_key].idxmin()
+        best_ea = summary.loc[best_idx, "Ea_kJ_mol"]
+        print(
+            f"[auto-ea] Suggested Ea ({metric_key}) = {best_ea:.3f} kJ/mol"
+        )
+        if args.auto_ea_plot:
+            fig, ax = plt.subplots()
+            ax.plot(summary["Ea_kJ_mol"], summary["mse_global"], label="MSE global")
+            ax.plot(
+                summary["Ea_kJ_mol"],
+                summary["mse_segmented"],
+                label="MSE segmentado",
+            )
+            ax.set_xlabel("Ea (kJ/mol)")
+            ax.set_ylabel("Erro médio")
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+            args.auto_ea_plot.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(args.auto_ea_plot, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            print(f"Auto-Ea scan saved to {args.auto_ea_plot}")
 
     if args.csv:
         args.csv.parent.mkdir(parents=True, exist_ok=True)
@@ -929,9 +1126,13 @@ def launch_ui() -> None:
         gr.Dropdown,
         gr.Dropdown,
         gr.Dropdown,
+        gr.Textbox,
         gr.Dropdown,
+        gr.Textbox,
         gr.Radio,
         gr.Radio,
+        gr.Textbox,
+        gr.Textbox,
     ]:
         if file is None:
             empty_update = gr.Dropdown.update(choices=[], value=None)
@@ -944,17 +1145,33 @@ def launch_ui() -> None:
                 empty_update,
                 empty_update,
                 empty_update,
+                gr.Textbox.update(value=""),
                 gr.Dropdown.update(
                     choices=TECHNIQUE_CHOICES, value=TECHNIQUE_CHOICES[0]
                 ),
+                gr.Textbox.update(value=""),
                 radio_update,
                 gr.Radio.update(value="C"),
+                gr.Textbox.update(value=""),
+                gr.Textbox.update(value=""),
             )
 
         dataframe = read_table(file.name)
-        mapping = infer_mapping(dataframe)
+        mapping = infer_mapping(
+            dataframe,
+            default_composition="",
+            default_technique=TECHNIQUE_CHOICES[0],
+        )
         columns = [str(col) for col in dataframe.columns]
         technique_choices = columns + TECHNIQUE_CHOICES
+        composition_value = (
+            mapping.composition if mapping.composition in columns else None
+        )
+        technique_selection = (
+            mapping.technique
+            if mapping.technique in columns
+            else mapping.technique_default or TECHNIQUE_CHOICES[0]
+        )
 
         return (
             gr.Dataframe.update(value=dataframe.head(10)),
@@ -963,10 +1180,14 @@ def launch_ui() -> None:
             gr.Dropdown.update(choices=columns, value=mapping.time_col),
             gr.Dropdown.update(choices=columns, value=mapping.temp_col),
             gr.Dropdown.update(choices=columns, value=mapping.y_col),
-            gr.Dropdown.update(choices=columns, value=mapping.composition),
-            gr.Dropdown.update(choices=technique_choices, value=mapping.technique),
+            gr.Dropdown.update(choices=columns, value=composition_value),
+            gr.Textbox.update(value=mapping.composition_default or ""),
+            gr.Dropdown.update(choices=technique_choices, value=technique_selection),
+            gr.Textbox.update(value=mapping.tech_comment or ""),
             gr.Radio.update(value=mapping.time_unit),
             gr.Radio.update(value=mapping.temp_unit),
+            gr.Textbox.update(value=mapping.user or ""),
+            gr.Textbox.update(value=mapping.timestamp or ""),
         )
 
     def derive_callback(
@@ -976,9 +1197,13 @@ def launch_ui() -> None:
         temp_col: str,
         y_col: str,
         composition_col: str,
+        composition_default: str,
         technique_value: str,
+        tech_comment: str,
         time_unit: str,
         temp_unit: str,
+        user_name: str,
+        timestamp_text: str,
         smooth: str,
         window: float,
         poly: float,
@@ -987,23 +1212,54 @@ def launch_ui() -> None:
         if dataframe is None:
             return gr.Dataframe.update(value=None), None, gr.File.update(value=None)
 
+        columns = [str(col) for col in dataframe.columns]
+        composition_value = composition_col if composition_col in columns else None
+        technique_column = technique_value if technique_value in columns else None
+        technique_default = (
+            technique_value if technique_value in TECHNIQUE_CHOICES else None
+        )
+        extra = {}
         mapping = ColumnMap(
             sample_id=sample_col,
             time_col=time_col,
             temp_col=temp_col,
             y_col=y_col,
-            composition=composition_col,
-            technique=technique_value,
+            composition=composition_value,
+            technique=technique_column,
+            composition_default=composition_default.strip() or None,
+            technique_default=technique_default,
+            tech_comment=tech_comment.strip() or None,
+            user=user_name.strip() or None,
+            timestamp=timestamp_text.strip() or None,
             time_unit=time_unit,  # type: ignore[arg-type]
             temp_unit=temp_unit,  # type: ignore[arg-type]
+            extra_metadata=extra,
+        )
+        if mapping.technique is None and mapping.technique_default:
+            profile = TECHNIQUE_PROFILES.get(mapping.technique_default)
+            if profile:
+                enriched = dict(mapping.extra_metadata)
+                for key, value in profile.items():
+                    if key == "name":
+                        continue
+                    enriched[f"tech_{key}"] = str(value)
+                mapping = replace(mapping, extra_metadata=enriched)
+
+        mapping = ColumnMap(
+            **asdict(mapping)
         )
         mapped = apply_mapping(dataframe, mapping)
+        response = convert_response(mapped, column="rho_rel")
+        mapped["rho_rel"] = response
+        mapped["response"] = response
+        mapped["y"] = response
         derived = derive_all(
             mapped,
             smooth=smooth,
             window=int(window),
             poly=int(poly),
             moving_k=int(moving_k),
+            y_col="rho_rel",
         )
         csv_path = _to_temp_csv(derived, "derivatives")
         return (
@@ -1129,7 +1385,14 @@ def launch_ui() -> None:
                 y_dd = gr.Dropdown(label="response")
             with gr.Row():
                 comp_dd = gr.Dropdown(label="composition")
+                comp_default_tb = gr.Textbox(
+                    label="composition (default)", placeholder="Ex.: 316L"
+                )
                 technique_dd = gr.Dropdown(label="technique", choices=TECHNIQUE_CHOICES)
+                tech_comment_tb = gr.Textbox(
+                    label="tech_comment", placeholder="Detalhes quando 'Outro'"
+                )
+            with gr.Row():
                 time_unit_radio = gr.Radio(
                     label="Unidade de tempo",
                     choices=["s", "min"],
@@ -1141,6 +1404,10 @@ def launch_ui() -> None:
                     choices=["C", "K"],
                     value="C",
                     interactive=True,
+                )
+                user_tb = gr.Textbox(label="Operador", placeholder="Nome do operador")
+                timestamp_tb = gr.Textbox(
+                    label="Timestamp ISO", placeholder="2024-03-18T12:34:56Z"
                 )
 
             smooth_radio = gr.Radio(
@@ -1186,9 +1453,13 @@ def launch_ui() -> None:
                     temp_dd,
                     y_dd,
                     comp_dd,
+                    comp_default_tb,
                     technique_dd,
+                    tech_comment_tb,
                     time_unit_radio,
                     temp_unit_radio,
+                    user_tb,
+                    timestamp_tb,
                 ],
             )
 
@@ -1201,9 +1472,13 @@ def launch_ui() -> None:
                     temp_dd,
                     y_dd,
                     comp_dd,
+                    comp_default_tb,
                     technique_dd,
+                    tech_comment_tb,
                     time_unit_radio,
                     temp_unit_radio,
+                    user_tb,
+                    timestamp_tb,
                     smooth_radio,
                     window_slider,
                     poly_slider,
@@ -1354,6 +1629,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Arquivo JSON com o mapeamento de colunas.",
     )
     parser_pre_derive.add_argument(
+        "--response-type",
+        choices=["auto", "shrinkage", "delta", "density"],
+        default="auto",
+        help="Tipo da coluna de resposta para normalização automática.",
+    )
+    parser_pre_derive.add_argument(
+        "--L0",
+        type=float,
+        help="Comprimento inicial (necessário para response-type=delta).",
+    )
+    parser_pre_derive.add_argument(
+        "--rho0",
+        type=float,
+        help="Densidade inicial (necessária para response-type=density).",
+    )
+    parser_pre_derive.add_argument(
         "--smooth",
         choices=["savgol", "moving", "none"],
         default="savgol",
@@ -1418,6 +1709,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Faixas de densificação (ex.: '0.55-0.70,0.70-0.90').",
     )
     parser_arr_fit.add_argument(
+        "--segmentation-mode",
+        choices=["fixed", "max-rate"],
+        default="fixed",
+        help="Modo de definição dos estágios para Arrhenius.",
+    )
+    parser_arr_fit.add_argument(
+        "--segments",
+        type=int,
+        default=3,
+        help="Número de segmentos usados no modo max-rate.",
+    )
+    parser_arr_fit.add_argument(
+        "--min-size",
+        type=int,
+        default=5,
+        help="Número mínimo de pontos por segmento (max-rate).",
+    )
+    parser_arr_fit.add_argument(
         "--group-col",
         default="sample_id",
         help="Coluna de identificação da amostra.",
@@ -1480,9 +1789,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser_segmentation.add_argument(
         "--mode",
-        choices=["fixed", "data"],
+        choices=["fixed", "data", "max-rate"],
         default="fixed",
-        help="Modo de segmentação: limiares fixos ou data-driven.",
+        help="Modo de segmentação: limiares fixos, data-driven ou pico de taxa.",
     )
     parser_segmentation.add_argument(
         "--group-col",
@@ -2071,8 +2380,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser_msc.add_argument(
         "--ea",
         type=parse_ea_list,
-        required=True,
         help="Lista de Ea em kJ/mol para avaliar.",
+    )
+    parser_msc.add_argument(
+        "--ea-range",
+        type=parse_ea_range,
+        help="Faixa de Ea no formato inicio:fim:passo.",
     )
     parser_msc.add_argument(
         "--group-col",
@@ -2101,6 +2414,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Normalização aplicada antes do colapso MSC.",
     )
     parser_msc.add_argument(
+        "--segmentation-mode",
+        choices=["fixed", "max-rate"],
+        default="fixed",
+        help="Modo de segmentação para métricas segmentadas.",
+    )
+    parser_msc.add_argument(
+        "--stages",
+        default=None,
+        help="Faixas de densificação (modo fixed).",
+    )
+    parser_msc.add_argument(
+        "--segments",
+        type=int,
+        default=3,
+        help="Número de segmentos ao usar o modo max-rate.",
+    )
+    parser_msc.add_argument(
+        "--min-size",
+        type=int,
+        default=5,
+        help="Número mínimo de pontos por segmento (max-rate).",
+    )
+    parser_msc.add_argument(
         "--metric",
         choices=["global", "segmented"],
         default="segmented",
@@ -2115,6 +2451,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--png",
         type=Path,
         help="Path to save the MSC figure.",
+    )
+    parser_msc.add_argument(
+        "--auto-ea",
+        action="store_true",
+        help="Seleciona automaticamente o melhor Ea e gera diagnóstico.",
+    )
+    parser_msc.add_argument(
+        "--auto-ea-plot",
+        type=Path,
+        help="Arquivo PNG opcional com o gráfico Ea vs erro.",
     )
     parser_msc.set_defaults(func=cmd_msc)
 

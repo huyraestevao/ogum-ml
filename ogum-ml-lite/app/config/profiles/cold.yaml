@@ -1,0 +1,5 @@
+technique_profile:
+  name: Cold
+  heating_rate_c_per_min: 5
+  atmosphere: Ambiente controlado
+  notes: Cold sintering assistido por fase líquida a baixa temperatura.

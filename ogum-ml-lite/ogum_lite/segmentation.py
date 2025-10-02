@@ -222,6 +222,18 @@ def segment_fixed(
     return segments
 
 
+def _smooth_max_rate(signal: np.ndarray, window: int = 7) -> np.ndarray:
+    if signal.size < 3:
+        return signal
+    window = max(3, min(int(window), int(signal.size) if signal.size % 2 == 1 else int(signal.size) - 1))
+    if window % 2 == 0:
+        window += 1
+    if window >= signal.size:
+        return signal
+    kernel = np.ones(window) / window
+    return np.convolve(signal, kernel, mode="same")
+
+
 def segment_data_driven(
     time_s: np.ndarray,
     y: np.ndarray,
@@ -244,6 +256,64 @@ def segment_data_driven(
         upper = float(segment_y.max())
         segments.append((start, end, lower, upper))
         start = end
+    return segments
+
+
+def segment_max_rate(
+    time_s: np.ndarray,
+    y: np.ndarray,
+    *,
+    n_segments: int = 2,
+    min_size: int = 5,
+) -> list[tuple[int, int, float, float]]:
+    """Segment curve around the peak densification rate."""
+
+    if time_s.size < 2 or y.size < 2:
+        return []
+
+    dy_dt = np.gradient(y, time_s)
+    dy_dt_smooth = _smooth_max_rate(dy_dt, window=min(11, time_s.size))
+    finite = np.isfinite(dy_dt_smooth)
+    if not finite.any():
+        return []
+    adjusted = np.where(finite, dy_dt_smooth, -np.inf)
+    peak_idx = int(np.nanargmax(adjusted))
+
+    segments: list[tuple[int, int, float, float]] = []
+
+    def append_segment(start: int, end: int) -> None:
+        if end - start < max(1, min_size):
+            return
+        seg_y = y[start:end]
+        segments.append((start, end, float(seg_y.min()), float(seg_y.max())))
+
+    start_idx = 0
+    include_initial = n_segments >= 3
+    if include_initial:
+        threshold = 0.2 * float(dy_dt_smooth[peak_idx])
+        candidate = np.where(dy_dt_smooth >= threshold)[0]
+        if candidate.size:
+            first_active = int(candidate[0])
+            initial_end = max(min(peak_idx, first_active), min_size)
+        else:
+            initial_end = min(peak_idx, min_size)
+        if initial_end > start_idx:
+            append_segment(start_idx, initial_end)
+            start_idx = initial_end
+
+    before_end = max(peak_idx + 1, start_idx + min_size)
+    before_end = min(before_end, time_s.size)
+    if before_end > start_idx:
+        append_segment(start_idx, before_end)
+        start_idx = before_end
+
+    after_start = max(peak_idx, start_idx - 1 if start_idx > 0 else peak_idx)
+    after_start = max(after_start, 0)
+    if time_s.size - after_start >= min_size:
+        append_segment(after_start, time_s.size)
+
+    if len(segments) > n_segments:
+        segments = segments[:n_segments]
     return segments
 
 
@@ -272,8 +342,12 @@ def segment_group(
         raw_segments = segment_data_driven(
             time, y, n_segments=n_segments, min_size=min_size
         )
+    elif method == "max-rate":
+        raw_segments = segment_max_rate(
+            time, y, n_segments=n_segments, min_size=min_size
+        )
     else:
-        raise ValueError("method must be 'fixed' or 'data'")
+        raise ValueError("method must be 'fixed', 'data' or 'max-rate'")
 
     results: list[Segment] = []
     if sample_value is None and group_col in ordered.columns:
@@ -352,6 +426,64 @@ def segment_dataframe(
     )
 
 
+def aggregate_max_rate_bounds(
+    df: pd.DataFrame,
+    *,
+    group_col: str = "sample_id",
+    t_col: str = "time_s",
+    y_col: str = "rho_rel",
+    n_segments: int = 3,
+    min_size: int = 5,
+) -> list[tuple[float, float]]:
+    """Compute representative densification bounds from max-rate segmentation."""
+
+    segments = segment_dataframe(
+        df,
+        group_col=group_col,
+        t_col=t_col,
+        y_col=y_col,
+        method="max-rate",
+        n_segments=n_segments,
+        min_size=min_size,
+    )
+    if not segments:
+        return []
+
+    grouped: dict[str | int | float | None, list[Segment]] = {}
+    for segment in segments:
+        grouped.setdefault(segment.sample_id, []).append(segment)
+
+    boundary_lists: list[list[float]] = []
+    for sample_segments in grouped.values():
+        sample_segments.sort(key=lambda item: item.segment_index)
+        for idx in range(len(sample_segments) - 1):
+            boundary = float(sample_segments[idx].upper)
+            while len(boundary_lists) <= idx:
+                boundary_lists.append([])
+            boundary_lists[idx].append(boundary)
+
+    lower = min(float(seg.lower) for seg in segments)
+    upper = max(float(seg.upper) for seg in segments)
+    if lower >= upper:
+        return []
+
+    thresholds: list[float] = []
+    for values in boundary_lists:
+        if not values:
+            continue
+        thresholds.append(float(np.median(values)))
+
+    bounds = [lower, *sorted(set(thresholds)), upper]
+    bounds = [value for value in bounds if np.isfinite(value)]
+    unique_bounds = sorted(set(bounds))
+    if len(unique_bounds) < 2:
+        return []
+    segments_bounds: list[tuple[float, float]] = []
+    for idx in range(len(unique_bounds) - 1):
+        segments_bounds.append((unique_bounds[idx], unique_bounds[idx + 1]))
+    return segments_bounds
+
+
 __all__ = [
     "Segment",
     "LinearSegmentStats",
@@ -361,5 +493,7 @@ __all__ = [
     "segment_dataframe",
     "segment_data_driven",
     "segment_fixed",
+    "segment_max_rate",
     "segment_group",
+    "aggregate_max_rate_bounds",
 ]

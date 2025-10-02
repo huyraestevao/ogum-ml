@@ -1,0 +1,5 @@
+technique_profile:
+  name: Heating-Only
+  heating_rate_c_per_min: 15
+  atmosphere: Ar/N2
+  notes: Perfil sem pressão, apenas aquecimento com rampa simples.

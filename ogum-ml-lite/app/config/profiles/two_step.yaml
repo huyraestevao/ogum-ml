@@ -1,0 +1,5 @@
+technique_profile:
+  name: Two-Step
+  heating_rate_c_per_min: 20
+  atmosphere: Ar
+  notes: Duas rampas com patamar intermediário para controle de grão.
