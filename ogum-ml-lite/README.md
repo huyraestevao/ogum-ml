@@ -35,6 +35,52 @@ de usar em Google Colab e pronto para integrações com pipelines de ML.
 O frontend agora usa uma arquitetura modular com design system leve, theming
 dinâmico, i18n e camada de serviços compartilhada.
 
+## Telemetria e Experimentos (Fase 10)
+
+### Telemetria opcional
+
+- Opt-in local pela sidebar ou via `OGUML_TELEMETRY=1`.
+- Somente eventos técnicos (nome da etapa, duração, variante A/B, acertos de cache) são gravados em `workspace/telemetry.jsonl`.
+- Agregue e limpe métricas com o utilitário:
+
+```bash
+python -m app.services.cli_tools telemetry aggregate --file workspace/telemetry.jsonl --out telemetry_summary.json
+python -m app.services.cli_tools telemetry clean --file workspace/telemetry.jsonl
+```
+
+### Experimentos A/B de UX
+
+- Experimentos ativos: `wizard_vs_tabs`, `msc_controls_layout`, `run_buttons_position`.
+- Atribuição sticky por sessão com coleta automática nas ações do wizard.
+- Exporte contagens por variante:
+
+```bash
+python -m app.services.cli_tools ab export --file workspace/telemetry.jsonl --out ab_summary.json
+```
+
+### Temas personalizados
+
+- Temas base em `app/config/themes/` (`base.yaml`, `dark.yaml`, `custom.example.yaml`).
+- Faça upload de um YAML pela sidebar ou adicione o arquivo ao diretório para disponibilizá-lo.
+- A função `get_theme(dark, override)` mescla overrides com o tema base.
+
+### Perfis de execução por técnica
+
+- Perfis YAML em `app/config/profiles/` (`conventional`, `fs_uhs`, `sps`).
+- Seleção pela sidebar aplica presets de Ea, métricas MSC, features elétricas etc.
+- O diff aplicado é exibido como JSON resumido logo abaixo da seleção.
+
+### Cache e Performance
+
+- Cache em disco por hash de entradas idempotentes (prep, features, MSC) em `workspace/.cache/`.
+- Instrumentação com `@profile_step` gera duração/memória, exibidos tanto no log quanto na telemetria.
+- Inspecione ou limpe o cache via CLI:
+
+```bash
+python -m app.services.cli_tools cache stats --dir workspace/.cache
+python -m app.services.cli_tools cache purge --dir workspace/.cache
+```
+
 ### Streamlit (painel principal)
 
 ```bash

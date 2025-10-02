@@ -1,0 +1,28 @@
+columns:
+  required:
+    - sample_id
+    - time_s
+    - temp_C
+    - rho_rel
+    - pressure_mpa
+msc:
+  ea_kj:
+    - 150
+    - 225
+    - 325
+  metric: densified
+features:
+  include:
+    - global
+    - stage
+    - electric
+ml:
+  targets:
+    - mechanism_label
+segmentation:
+  bounds:
+    - 50
+    - 65
+    - 85
+electric_features:
+  enabled: true

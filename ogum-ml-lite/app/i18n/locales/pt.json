@@ -20,7 +20,15 @@
     "apply_preset": "Aplicar",
     "restore": "Restaurar padrão",
     "load_file": "Carregar preset",
-    "log_tail": "Últimos eventos"
+    "log_tail": "Últimos eventos",
+    "theme_section": "Temas",
+    "theme_label": "Paleta ativa",
+    "theme_upload": "Enviar tema customizado",
+    "profile_section": "Perfis",
+    "profile_label": "Perfil de execução",
+    "profile_preview": "Resumo do perfil aplicado",
+    "telemetry_section": "Telemetria",
+    "telemetry_label": "Compartilhar métricas de uso (local, sem dados sensíveis)"
   },
   "actions": {
     "validate": "Validar",
@@ -45,6 +53,7 @@
     "title": "Modo guiado",
     "intro": "Execute o pipeline completo passo a passo.",
     "focus_hint": "Use Tab/Shift+Tab para navegar e Enter para acionar botões.",
+    "tabs_status": "Progresso: {status}",
     "actions": {
       "previous": "Voltar",
       "next": "Avançar",

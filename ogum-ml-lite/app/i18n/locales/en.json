@@ -20,7 +20,15 @@
     "apply_preset": "Apply",
     "restore": "Restore default",
     "load_file": "Load preset",
-    "log_tail": "Recent events"
+    "log_tail": "Recent events",
+    "theme_section": "Themes",
+    "theme_label": "Active palette",
+    "theme_upload": "Upload custom theme",
+    "profile_section": "Profiles",
+    "profile_label": "Execution profile",
+    "profile_preview": "Applied profile snapshot",
+    "telemetry_section": "Telemetry",
+    "telemetry_label": "Share usage metrics locally (no sensitive data)"
   },
   "actions": {
     "validate": "Validate",
@@ -45,6 +53,7 @@
     "title": "Guided mode",
     "intro": "Run the full pipeline step by step.",
     "focus_hint": "Use Tab/Shift+Tab to move and Enter to trigger buttons.",
+    "tabs_status": "Progress: {status}",
     "actions": {
       "previous": "Back",
       "next": "Next",

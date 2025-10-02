@@ -1,0 +1,26 @@
+columns:
+  required:
+    - sample_id
+    - time_s
+    - temp_C
+    - rho_rel
+msc:
+  ea_kj:
+    - 200
+    - 300
+    - 400
+  metric: segmented
+features:
+  include:
+    - global
+    - stage
+ml:
+  targets:
+    - densification_rate
+segmentation:
+  bounds:
+    - 55
+    - 70
+    - 90
+electric_features:
+  enabled: false

@@ -12,7 +12,7 @@ from ogum_lite.ui import orchestrator
 from ogum_lite.ui.workspace import Workspace
 from tenacity import RetryError, retry, stop_after_attempt, wait_fixed
 
-from . import telemetry
+from . import cache, profiling, telemetry
 
 
 @dataclass(slots=True)
@@ -36,6 +36,95 @@ def _log_tail(workspace: Workspace, lines: int = 12) -> str:
     return "\n".join(log_path.read_text(encoding="utf-8").splitlines()[-lines:])
 
 
+@cache.cache_result(
+    "prep",
+    inputs=lambda input_csv, *_, **__: [input_csv],
+    params=lambda input_csv, preset, **_: preset.get("preprocess", {}),
+)
+@profiling.profile_step("prep")
+def _run_prep_cached(
+    input_csv: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> str:
+    return orchestrator.run_prep(input_csv, preset, workspace)
+
+
+@cache.cache_result(
+    "features",
+    inputs=lambda csv, *_, **__: [csv],
+    params=lambda csv, preset, use_prep=True, **_: {
+        "features": preset.get("features", {}),
+        "use_prep": use_prep,
+    },
+)
+@profiling.profile_step("features")
+def _run_features_cached(
+    csv: Path,
+    preset: Mapping[str, Any],
+    *,
+    workspace: Workspace,
+    use_prep: bool = True,
+) -> str:
+    return orchestrator.run_features(csv, preset, workspace)
+
+
+@cache.cache_result(
+    "theta_msc",
+    inputs=lambda prep_csv, *_, **__: [prep_csv],
+    params=lambda prep_csv, preset, **_: preset.get("msc", {}),
+)
+@profiling.profile_step("theta_msc")
+def _run_theta_cached(
+    prep_csv: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> Dict[str, Any]:
+    return orchestrator.run_theta_msc(prep_csv, preset, workspace)
+
+
+@profiling.profile_step("segmentation")
+def _run_segmentation(
+    prep_csv: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> str:
+    return orchestrator.run_segmentation(prep_csv, preset, workspace)
+
+
+@profiling.profile_step("mechanism")
+def _run_mechanism(
+    theta_csv: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> str:
+    return orchestrator.run_mechanism(theta_csv, preset, workspace)
+
+
+@profiling.profile_step("ml_train_cls")
+def _run_ml_cls(
+    features_csv: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> Dict[str, Any]:
+    return orchestrator.run_ml_train_cls(features_csv, preset, workspace)
+
+
+@profiling.profile_step("ml_train_reg")
+def _run_ml_reg(
+    features_csv: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> Dict[str, Any]:
+    return orchestrator.run_ml_train_reg(features_csv, preset, workspace)
+
+
+@profiling.profile_step("ml_predict")
+def _run_ml_predict(
+    features_csv: Path,
+    model_path: Path,
+    preset: Mapping[str, Any],
+    *,
+    workspace: Workspace,
+) -> str:
+    return orchestrator.run_ml_predict(features_csv, model_path, preset, workspace)
+
+
+@profiling.profile_step("export")
+def _run_export(
+    artifacts_dir: Path, preset: Mapping[str, Any], *, workspace: Workspace
+) -> str:
+    return orchestrator.build_report(artifacts_dir, preset, workspace)
+
+
 def _wrap_orchestrator(
     func: Callable[..., Any],
     workspace: Workspace,
@@ -43,16 +132,32 @@ def _wrap_orchestrator(
     *args: Any,
     **kwargs: Any,
 ) -> Any:
+    telemetry_props = kwargs.pop("telemetry_props", None)
+
     @retry(stop=stop_after_attempt(2), wait=wait_fixed(0.2))
     def _call() -> Any:
-        return func(*args, **kwargs)
+        profiling.set_last_profile(None)
+        cache.reset_last_cache()
+        return func(*args, workspace=workspace, **kwargs)
 
     try:
         result = _call()
     except Exception as exc:
-        telemetry.log_event(workspace, f"{event}.error", {"message": str(exc)})
+        telemetry.log_event(
+            f"{event}.error", {"message": str(exc)}, workspace=workspace
+        )
         raise
-    telemetry.log_event(workspace, event, {})
+
+    props: Dict[str, Any] = dict(telemetry_props or {})
+    profile = profiling.get_last_profile() or {}
+    if profile:
+        props.setdefault("duration_ms", profile.get("duration_ms"))
+        if profile.get("memory_mb") is not None:
+            props.setdefault("memory_mb", profile.get("memory_mb"))
+    cache_hit = cache.last_cache_hit()
+    if cache_hit is not None:
+        props.setdefault("cache_hit", cache_hit)
+    telemetry.log_event(event, props, workspace=workspace)
     return result
 
 
@@ -60,7 +165,12 @@ def run_prep(
     input_csv: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
     output = _wrap_orchestrator(
-        orchestrator.run_prep, workspace, "prep", input_csv, preset, workspace
+        _run_prep_cached,
+        workspace,
+        "prep",
+        input_csv,
+        preset,
+        telemetry_props={"input": str(input_csv)},
     )
     return RunResult(
         stdout=_log_tail(workspace),
@@ -80,7 +190,13 @@ def run_features(
     if not use_prep:
         csv = Path(preset.get("features", {}).get("input", prep_csv))
     output = _wrap_orchestrator(
-        orchestrator.run_features, workspace, "features", csv, preset, workspace
+        _run_features_cached,
+        workspace,
+        "features",
+        csv,
+        preset,
+        use_prep=use_prep,
+        telemetry_props={"use_prep": use_prep},
     )
     return RunResult(
         stdout=_log_tail(workspace),
@@ -92,8 +208,17 @@ def run_features(
 def run_theta_msc(
     prep_csv: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
+    msc_cfg = preset.get("msc", {})
     payload: Dict[str, Any] = _wrap_orchestrator(
-        orchestrator.run_theta_msc, workspace, "theta_msc", prep_csv, preset, workspace
+        _run_theta_cached,
+        workspace,
+        "theta_msc",
+        prep_csv,
+        preset,
+        telemetry_props={
+            "ea": msc_cfg.get("ea_kj"),
+            "metric": msc_cfg.get("metric"),
+        },
     )
     outputs = {
         "theta_table": Path(payload["theta_table"]),
@@ -103,7 +228,9 @@ def run_theta_msc(
     }
     if payload.get("best_ea") is not None:
         telemetry.log_event(
-            workspace, "theta_msc.best_ea", {"best_ea": payload["best_ea"]}
+            "theta_msc.best_ea",
+            {"best_ea": payload["best_ea"]},
+            workspace=workspace,
         )
     return RunResult(stdout=_log_tail(workspace), stderr="", outputs=outputs)
 
@@ -112,12 +239,12 @@ def run_segmentation(
     prep_csv: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
     path = _wrap_orchestrator(
-        orchestrator.run_segmentation,
+        _run_segmentation,
         workspace,
         "segmentation",
         prep_csv,
         preset,
-        workspace,
+        telemetry_props={"bounds": preset.get("segmentation", {}).get("bounds")},
     )
     return RunResult(
         stdout=_log_tail(workspace),
@@ -130,7 +257,11 @@ def run_mechanism(
     theta_csv: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
     path = _wrap_orchestrator(
-        orchestrator.run_mechanism, workspace, "mechanism", theta_csv, preset, workspace
+        _run_mechanism,
+        workspace,
+        "mechanism",
+        theta_csv,
+        preset,
     )
     return RunResult(
         stdout=_log_tail(workspace),
@@ -142,13 +273,14 @@ def run_mechanism(
 def run_ml_train_cls(
     features_csv: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
+    ml_cfg = preset.get("ml", {})
     payload: Dict[str, Any] = _wrap_orchestrator(
-        orchestrator.run_ml_train_cls,
+        _run_ml_cls,
         workspace,
         "ml_train_cls",
         features_csv,
         preset,
-        workspace,
+        telemetry_props={"targets": ml_cfg.get("targets"), "task": "cls"},
     )
     outdir = Path(payload["outdir"])
     outputs = {"outdir": outdir, "model_card": outdir / "model_card.json"}
@@ -162,13 +294,14 @@ def run_ml_train_cls(
 def run_ml_train_reg(
     features_csv: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
+    ml_cfg = preset.get("ml", {})
     payload: Dict[str, Any] = _wrap_orchestrator(
-        orchestrator.run_ml_train_reg,
+        _run_ml_reg,
         workspace,
         "ml_train_reg",
         features_csv,
         preset,
-        workspace,
+        telemetry_props={"targets": ml_cfg.get("targets"), "task": "reg"},
     )
     outdir = Path(payload["outdir"])
     outputs = {"outdir": outdir, "model_card": outdir / "model_card.json"}
@@ -186,13 +319,13 @@ def run_ml_predict(
     workspace: Workspace,
 ) -> RunResult:
     prediction = _wrap_orchestrator(
-        orchestrator.run_ml_predict,
+        _run_ml_predict,
         workspace,
         "ml_predict",
         features_csv,
         model_path,
         preset,
-        workspace,
+        telemetry_props={"model": str(model_path)},
     )
     return RunResult(
         stdout=_log_tail(workspace),
@@ -205,7 +338,12 @@ def export_report(
     artifacts_dir: Path, preset: Mapping[str, Any], workspace: Workspace
 ) -> RunResult:
     zip_path = _wrap_orchestrator(
-        orchestrator.build_report, workspace, "export", artifacts_dir, preset, workspace
+        _run_export,
+        workspace,
+        "export",
+        artifacts_dir,
+        preset,
+        telemetry_props={"artifacts_dir": str(artifacts_dir)},
     )
     export_cfg = preset.get("export", {})
     report_path = workspace.resolve(
@@ -238,9 +376,11 @@ def export_onnx(
     try:
         completed = _execute(command)
     except RetryError as exc:  # pragma: no cover - defensive surface
-        telemetry.log_event(workspace, "export_onnx.error", {"error": str(exc)})
+        telemetry.log_event(
+            "export_onnx.error", {"error": str(exc)}, workspace=workspace
+        )
         raise
-    telemetry.log_event(workspace, "export_onnx", {"model": str(model_path)})
+    telemetry.log_event("export_onnx", {"model": str(model_path)}, workspace=workspace)
     return RunResult(
         stdout=completed.stdout,
         stderr=completed.stderr,

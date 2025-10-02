@@ -1,0 +1,10 @@
+colors:
+  background: "#12151c"
+  surface: "#1b1f29"
+  text: "#f4f6fb"
+  muted: "#9aa4b5"
+  primary: "#88a8f5"
+  success: "#7dd48a"
+  warning: "#ffd084"
+  danger: "#ffb4ab"
+  border: "#2c3240"
