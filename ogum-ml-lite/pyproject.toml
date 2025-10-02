@@ -48,6 +48,9 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+lgbm = ["lightgbm>=4,<5"]
+cat = ["catboost>=1.2,<2"]
+xgb = ["xgboost>=2,<3"]
 
 [tool.setuptools.packages.find]
 include = ["ogum_lite", "app"]

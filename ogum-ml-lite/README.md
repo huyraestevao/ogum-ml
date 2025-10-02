@@ -131,6 +131,63 @@ python app/gradio_app.py
 Interface Blocks compacta que reutiliza `app/services/run_cli.py` para rodar o
 pipeline e gerar o ZIP com os artefatos do workspace.
 
+## Fase 11 — Experimentação Avançada
+
+### Modelos opcionais
+
+Os novos benchmarks suportam modelos adicionais de gradient boosting sem
+depender deles por padrão. Instale apenas o que precisar:
+
+```bash
+pip install "ogum-ml[lgbm]"  # LightGBM
+pip install "ogum-ml[cat]"   # CatBoost
+pip install "ogum-ml[xgb]"   # XGBoost
+```
+
+Sem essas extras, os modelos continuam disponíveis via Random Forest.
+
+### Benchmark padronizado
+
+Use `ml bench` para executar a matriz `targets × feature_sets × modelos`, com
+GroupKFold por `sample_id` e pipelines consistentes (StandardScaler +
+OneHotEncoder + estimador). Um exemplo de classificação:
+
+```bash
+python -m ogum_lite.cli ml bench \
+  --table features.csv \
+  --task cls \
+  --targets technique \
+  --feature-sets basic="heating_rate_med_C_per_s,T_max_C,y_final,t_to_90pct_s" \
+                  theta="theta_Ea_200kJ,theta_Ea_300kJ,theta_Ea_400kJ" \
+  --models rf,lgbm,cat,xgb \
+  --group-col sample_id \
+  --outdir artifacts/bench_cls
+```
+
+Cada combinação gera uma pasta `<outdir>/<target>/<feature_set>/<model>/` com
+`model.joblib`, `feature_cols.json`, `target.json`, `cv_metrics.json`,
+`model_card.json` e `training_log.json`. As métricas consolidadas ficam em
+`bench_results.csv`.
+
+### Comparação e ranking
+
+Depois de rodar o benchmark, gere o resumo com `ml compare`:
+
+```bash
+python -m ogum_lite.cli ml compare \
+  --bench-csv artifacts/bench_cls/bench_results.csv \
+  --task cls \
+  --outdir artifacts/bench_cls
+```
+
+O comando cria `bench_summary.csv` (ranking por alvo/conjunto de features) e
+`ranking.png` (média geral). Modelos indisponíveis são ignorados automaticamente
+com aviso `[skip]`.
+
+> 💡 Para execuções rápidas em datasets grandes, reduza `n_estimators` ajustando
+> os parâmetros ao instanciar os pipelines (ex.: `--models rf` para testes
+> rápidos ou adaptando o código/factory antes da rodada final).
+
 ## Instalação
 
 ```bash

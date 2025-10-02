@@ -295,9 +295,11 @@ def apply_mapping(df: pd.DataFrame, cmap: ColumnMap) -> pd.DataFrame:
         raise KeyError("Composition column missing and no default provided")
 
     if cmap.technique and cmap.technique in dataframe.columns:
-        tech_values = dataframe[cmap.technique].fillna(
-            cmap.technique_default or TECHNIQUE_CHOICES[0]
-        ).astype(str)
+        tech_values = (
+            dataframe[cmap.technique]
+            .fillna(cmap.technique_default or TECHNIQUE_CHOICES[0])
+            .astype(str)
+        )
     elif cmap.technique_default is not None:
         tech_values = pd.Series(cmap.technique_default, index=result.index, dtype=str)
     else:
