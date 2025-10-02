@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import shutil
 import tempfile
@@ -54,6 +55,12 @@ from .ml_hooks import (
     train_regressor,
 )
 from .preprocess import convert_response, derive_all
+from .publish.workflow import (
+    prepare_run_for_publish,
+    publish_status,
+    publish_to_figshare,
+    publish_to_zenodo,
+)
 from .reports import (
     plot_confusion_matrix,
     plot_feature_importance,
@@ -1735,6 +1742,42 @@ def cmd_jobs_cancel(args: argparse.Namespace) -> None:
         print(f"Job {args.job_id} não está em execução.")
 
 
+def cmd_publish_prepare(args: argparse.Namespace) -> None:
+    result = prepare_run_for_publish(
+        run_dir=args.run_dir, meta_yaml=args.meta, out_dir=args.outdir
+    )
+    print("Publish bundle ready:")
+    print(f"  Manifest: {result['manifest_path']}")
+    print(f"  Metadata: {result['metadata_path']}")
+    print(f"  Bundle ZIP: {result['bundle_zip']}")
+    print(f"  Checksum: {result['checksum_path']}")
+
+
+def cmd_publish_zenodo(args: argparse.Namespace) -> None:
+    receipt = publish_to_zenodo(bundle_dir=args.bundle, env=os.environ)
+    print("Zenodo publication completed:")
+    print(f"  Deposition ID: {receipt.get('deposition_id')}")
+    if receipt.get("doi"):
+        print(f"  DOI: {receipt['doi']}")
+    if receipt.get("url"):
+        print(f"  URL: {receipt['url']}")
+
+
+def cmd_publish_figshare(args: argparse.Namespace) -> None:
+    receipt = publish_to_figshare(bundle_dir=args.bundle, env=os.environ)
+    print("Figshare publication completed:")
+    print(f"  Article ID: {receipt.get('article_id')}")
+    if receipt.get("doi"):
+        print(f"  DOI: {receipt['doi']}")
+    if receipt.get("url"):
+        print(f"  URL: {receipt['url']}")
+
+
+def cmd_publish_status(args: argparse.Namespace) -> None:
+    status = publish_status(bundle_dir=args.bundle)
+    print(json.dumps(status, indent=2, ensure_ascii=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ogum ML Lite CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1790,6 +1833,69 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser_jobs_cancel.add_argument("job_id", help="Identificador do job")
     parser_jobs_cancel.set_defaults(func=cmd_jobs_cancel)
+
+    parser_publish = subparsers.add_parser(
+        "publish", help="Preparar bundles e publicar em repositórios científicos"
+    )
+    publish_subparsers = parser_publish.add_subparsers(
+        dest="publish_command", required=True
+    )
+
+    parser_publish_prepare = publish_subparsers.add_parser(
+        "prepare", help="Empacotar artefatos de um run para publicação"
+    )
+    parser_publish_prepare.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="Diretório com os artefatos do run (report, métricas, etc.)",
+    )
+    parser_publish_prepare.add_argument(
+        "--meta",
+        type=Path,
+        required=True,
+        help="Arquivo YAML com os metadados de publicação",
+    )
+    parser_publish_prepare.add_argument(
+        "--outdir",
+        type=Path,
+        required=True,
+        help="Diretório onde o bundle será gerado",
+    )
+    parser_publish_prepare.set_defaults(func=cmd_publish_prepare)
+
+    parser_publish_zenodo = publish_subparsers.add_parser(
+        "zenodo", help="Publicar bundle no Zenodo"
+    )
+    parser_publish_zenodo.add_argument(
+        "--bundle",
+        type=Path,
+        required=True,
+        help="Diretório gerado pelo comando 'publish prepare'",
+    )
+    parser_publish_zenodo.set_defaults(func=cmd_publish_zenodo)
+
+    parser_publish_figshare = publish_subparsers.add_parser(
+        "figshare", help="Publicar bundle no Figshare"
+    )
+    parser_publish_figshare.add_argument(
+        "--bundle",
+        type=Path,
+        required=True,
+        help="Diretório gerado pelo comando 'publish prepare'",
+    )
+    parser_publish_figshare.set_defaults(func=cmd_publish_figshare)
+
+    parser_publish_status = publish_subparsers.add_parser(
+        "status", help="Exibir recibos de publicação gerados"
+    )
+    parser_publish_status.add_argument(
+        "--bundle",
+        type=Path,
+        required=True,
+        help="Diretório gerado pelo comando 'publish prepare'",
+    )
+    parser_publish_status.set_defaults(func=cmd_publish_status)
 
     parser_validate = subparsers.add_parser("validate", help="Data validation helpers")
     validate_subparsers = parser_validate.add_subparsers(
