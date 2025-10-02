@@ -61,6 +61,7 @@ from .reports import (
     render_html_report,
 )
 from .segmentation import aggregate_max_rate_bounds, segment_dataframe
+from .sim.cli_sim import build_sim_parser
 from .stages import DEFAULT_STAGES
 from .theta_msc import OgumLite, score_activation_energies
 from .validators import validate_feature_df, validate_long_df
@@ -1740,6 +1741,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser_compare = subparsers.add_parser("compare", help="Comparador de execuções")
     build_compare_parser(parser_compare)
+
+    build_sim_parser(subparsers)
 
     parser_jobs = subparsers.add_parser("jobs", help="Scheduler e monitor de jobs")
     parser_jobs.add_argument(
