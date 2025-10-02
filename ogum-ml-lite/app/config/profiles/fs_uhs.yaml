@@ -5,6 +5,11 @@ columns:
     - temp_C
     - rho_rel
     - pressure_mpa
+technique_profile:
+  name: UHS
+  heating_rate_c_per_min: 50
+  atmosphere: Inerte
+  notes: Ultra-high speed sintering com pressão uniaxial moderada.
 msc:
   ea_kj:
     - 150

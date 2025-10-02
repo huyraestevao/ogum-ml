@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Literal
+from typing import Dict, Iterable, Literal, Optional
 
 import pandas as pd
+import yaml
+
+from . import __path__ as OGUM_PACKAGE_PATH
 
 TimeUnit = Literal["s", "min"]
 TemperatureUnit = Literal["C", "K"]
@@ -20,10 +23,16 @@ class ColumnMap:
     time_col: str
     temp_col: str
     y_col: str
-    composition: str
-    technique: str
+    composition: str | None
+    technique: str | None
+    composition_default: Optional[str] = None
+    technique_default: Optional[str] = None
+    tech_comment: Optional[str] = None
+    user: Optional[str] = None
+    timestamp: Optional[str] = None
     time_unit: TimeUnit = "s"
     temp_unit: TemperatureUnit = "C"
+    extra_metadata: dict[str, str] = field(default_factory=dict)
 
 
 ALIASES: Dict[str, Iterable[str]] = {
@@ -62,13 +71,60 @@ ALIASES: Dict[str, Iterable[str]] = {
 
 TECHNIQUE_CHOICES = [
     "Conventional",
-    "UHS",
-    "Flash",
     "SPS",
+    "Flash",
+    "UHS",
     "Two-Step",
     "Cold",
-    "HeatingOnly",
+    "Heating-Only",
+    "Outro",
 ]
+
+
+def _profiles_dir() -> Path:
+    package_root = Path(list(OGUM_PACKAGE_PATH)[0])
+    return package_root.parent / "app" / "config" / "profiles"
+
+
+def load_technique_profiles(directory: str | Path | None = None) -> Dict[str, dict]:
+    """Load technique presets from YAML files bundled with the application."""
+
+    if directory is None:
+        directory = _profiles_dir()
+    path = Path(directory)
+    profiles: Dict[str, dict] = {}
+    if not path.exists():
+        return profiles
+
+    for yaml_path in sorted(path.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(yaml_path.read_text())
+        except Exception:  # pragma: no cover - defensive fallback
+            continue
+        if not isinstance(data, dict):
+            continue
+        profile = data.get("technique_profile")
+        if not isinstance(profile, dict):
+            continue
+        technique_name = profile.get("name") or data.get("name")
+        if not technique_name:
+            continue
+        technique_name = str(technique_name)
+        profiles[technique_name] = profile
+    return profiles
+
+
+TECHNIQUE_PROFILES = load_technique_profiles()
+
+
+CANONICAL_COLUMNS = (
+    "sample_id",
+    "time_s",
+    "temp_C",
+    "response",
+    "composition",
+    "technique",
+)
 
 
 def _normalise(name: str) -> str:
@@ -82,13 +138,32 @@ def _normalise(name: str) -> str:
     )
 
 
+def _detect_header_start(path: Path) -> int:
+    with path.open("r", encoding="utf-8-sig", errors="ignore") as handle:
+        for idx, line in enumerate(handle):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if any(delim in stripped for delim in (",", ";", "\t")):
+                return idx
+    return 0
+
+
 def read_table(path: str | Path) -> pd.DataFrame:
-    """Read CSV/XLS/XLSX files using pandas based on the file extension."""
+    """Read delimited or spreadsheet files handling metadata prologues."""
 
     path = Path(path)
     suffix = path.suffix.lower()
-    if suffix == ".csv":
-        return pd.read_csv(path)
+    if suffix in {".csv", ".txt"}:
+        header_row = _detect_header_start(path)
+        return pd.read_csv(
+            path,
+            sep=None,
+            engine="python",
+            comment="#",
+            skip_blank_lines=True,
+            header=header_row,
+        )
     if suffix in {".xls", ".xlsx"}:
         return pd.read_excel(path)
     raise ValueError(f"Unsupported file extension: {suffix}")
@@ -122,15 +197,39 @@ def _detect_temperature_unit(column_name: str) -> TemperatureUnit:
     return "C"
 
 
-def infer_mapping(df: pd.DataFrame) -> ColumnMap:
+def infer_mapping(
+    df: pd.DataFrame,
+    *,
+    default_composition: str | None = None,
+    default_technique: str | None = None,
+    tech_comment: str | None = None,
+    user: str | None = None,
+    timestamp: str | None = None,
+    extra_metadata: dict[str, str] | None = None,
+) -> ColumnMap:
     """Infer :class:`ColumnMap` for a dataframe based on column aliases."""
 
     sample_id = _match_column(df, "sample_id")
     time_col = _match_column(df, "time")
     temp_col = _match_column(df, "temperature")
     y_col = _match_column(df, "response")
-    composition = _match_column(df, "composition")
-    technique = _match_column(df, "technique")
+    composition_default = None
+    try:
+        composition = _match_column(df, "composition")
+    except KeyError:
+        if default_composition is None:
+            raise
+        composition = None
+        composition_default = default_composition
+
+    technique_default = None
+    try:
+        technique = _match_column(df, "technique")
+    except KeyError:
+        if default_technique is None:
+            raise
+        technique = None
+        technique_default = default_technique
 
     time_unit = _detect_time_unit(time_col)
     temp_unit = _detect_temperature_unit(temp_col)
@@ -142,6 +241,12 @@ def infer_mapping(df: pd.DataFrame) -> ColumnMap:
         y_col=y_col,
         composition=composition,
         technique=technique,
+        composition_default=composition_default,
+        technique_default=technique_default,
+        tech_comment=tech_comment,
+        user=user,
+        timestamp=timestamp,
+        extra_metadata=dict(extra_metadata or {}),
         time_unit=time_unit,
         temp_unit=temp_unit,
     )
@@ -182,22 +287,45 @@ def apply_mapping(df: pd.DataFrame, cmap: ColumnMap) -> pd.DataFrame:
         }
     )
 
-    if cmap.composition in dataframe.columns:
+    if cmap.composition and cmap.composition in dataframe.columns:
         result["composition"] = dataframe[cmap.composition].astype(str)
+    elif cmap.composition_default is not None:
+        result["composition"] = str(cmap.composition_default)
     else:
-        result["composition"] = cmap.composition
+        raise KeyError("Composition column missing and no default provided")
 
-    if cmap.technique in dataframe.columns:
-        tech_values = dataframe[cmap.technique].fillna(TECHNIQUE_CHOICES[0]).astype(str)
+    if cmap.technique and cmap.technique in dataframe.columns:
+        tech_values = dataframe[cmap.technique].fillna(
+            cmap.technique_default or TECHNIQUE_CHOICES[0]
+        ).astype(str)
+    elif cmap.technique_default is not None:
+        tech_values = pd.Series(cmap.technique_default, index=result.index, dtype=str)
     else:
-        tech_values = pd.Series(cmap.technique, index=result.index, dtype=str)
-    if not tech_values.isin(TECHNIQUE_CHOICES).all():
-        invalid = sorted(set(tech_values) - set(TECHNIQUE_CHOICES))
+        raise KeyError("Technique column missing and no default provided")
+
+    valid_choices = set(TECHNIQUE_CHOICES)
+    if not tech_values.isin(valid_choices).all():
+        invalid = sorted(set(tech_values) - valid_choices)
         raise ValueError(
             "Invalid technique detected. Expected one of "
             f"{', '.join(TECHNIQUE_CHOICES)}; got {invalid}"
         )
     result["technique"] = tech_values
+
+    if cmap.tech_comment:
+        result["tech_comment"] = str(cmap.tech_comment)
+    if cmap.user:
+        result["import_user"] = str(cmap.user)
+    if cmap.timestamp:
+        result["import_timestamp"] = str(cmap.timestamp)
+    for key, value in cmap.extra_metadata.items():
+        if key in result.columns:
+            continue
+        result[key] = value
+
+    result["response"] = y_series
+    result["rho_rel"] = y_series
+    result["y"] = y_series
 
     return result
 
@@ -207,6 +335,9 @@ __all__ = [
     "ALIASES",
     "TECHNIQUE_CHOICES",
     "read_table",
+    "load_technique_profiles",
+    "TECHNIQUE_PROFILES",
+    "CANONICAL_COLUMNS",
     "infer_mapping",
     "apply_mapping",
 ]

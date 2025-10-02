@@ -1,0 +1,5 @@
+technique_profile:
+  name: Flash
+  heating_rate_c_per_min: 500
+  atmosphere: Ar/Oxigênio controlado
+  notes: Flash sintering com corrente elétrica assistida e patamar curto.

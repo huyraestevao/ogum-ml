@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Optional
 
 import numpy as np
 import pandas as pd
@@ -67,6 +67,49 @@ def finite_diff(y: Iterable[float], x: Iterable[float]) -> np.ndarray:
     derivative[0] = (y[1] - y[0]) / (x[1] - x[0])
     derivative[-1] = (y[-1] - y[-2]) / (x[-1] - x[-2])
     return derivative
+
+
+def convert_response(
+    df: pd.DataFrame,
+    *,
+    column: str = "rho_rel",
+    response_type: Literal["shrinkage", "delta", "density", "auto"] | None = None,
+    L0: Optional[float] = None,
+    rho0: Optional[float] = None,
+) -> pd.Series:
+    """Normalise heterogeneous response measurements to relative shrinkage."""
+
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' not present in dataframe")
+
+    series = pd.to_numeric(df[column], errors="coerce")
+    inferred_type = response_type or "auto"
+
+    if inferred_type == "auto":
+        if (series < 0).any():
+            inferred_type = "shrinkage"
+        elif series.max(skipna=True) <= 1.05 and series.min(skipna=True) >= 0:
+            inferred_type = "density"
+        else:
+            inferred_type = "delta"
+
+    if inferred_type == "shrinkage":
+        converted = series.abs()
+    elif inferred_type == "delta":
+        if L0 is None or L0 <= 0:
+            raise ValueError("--L0 must be provided with a positive value for ΔL data")
+        converted = series / float(L0)
+    elif inferred_type == "density":
+        if rho0 is None or rho0 <= 0:
+            raise ValueError("--rho0 must be provided with a positive value for density data")
+        ratio = series / float(rho0)
+        ratio = ratio.clip(lower=1e-12)
+        converted = 1.0 - np.cbrt(ratio)
+    else:  # pragma: no cover - defensive guard
+        raise ValueError(f"Unsupported response type '{inferred_type}'")
+
+    converted = converted.astype(float)
+    return converted
 
 
 def derive_all(
@@ -143,4 +186,10 @@ def derive_all(
     return result
 
 
-__all__ = ["SmoothMethod", "smooth_series", "finite_diff", "derive_all"]
+__all__ = [
+    "SmoothMethod",
+    "smooth_series",
+    "finite_diff",
+    "derive_all",
+    "convert_response",
+]

@@ -5,6 +5,11 @@ columns:
     - temp_C
     - rho_rel
     - current_a
+technique_profile:
+  name: SPS
+  heating_rate_c_per_min: 100
+  atmosphere: Vacuum/Ar
+  notes: Ciclo em prensa a plasma com controle de corrente pulsada.
 msc:
   ea_kj:
     - 180

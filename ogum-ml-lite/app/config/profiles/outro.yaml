@@ -1,0 +1,5 @@
+technique_profile:
+  name: Outro
+  heating_rate_c_per_min: null
+  atmosphere: Desconhecida
+  notes: Utilize tech_comment para detalhar a rota personalizada.
