@@ -1,6 +1,7 @@
 """Page registry for the Streamlit application."""
 
 from . import (
+    page_compare,
     page_export,
     page_features,
     page_jobs,
@@ -13,6 +14,7 @@ from . import (
 )
 
 __all__ = [
+    "page_compare",
     "page_export",
     "page_features",
     "page_mechanism",
