@@ -1,0 +1,25 @@
+colors:
+  background: "#f7f9fc"
+  surface: "#ffffff"
+  text: "#1d1f24"
+  muted: "#5f6b7a"
+  primary: "#2453A6"
+  success: "#2d8a34"
+  warning: "#b36b00"
+  danger: "#ba1a1a"
+  border: "#d5dbe5"
+typography:
+  family: "'Inter', 'Segoe UI', sans-serif"
+  title_size: "1.75rem"
+  subtitle_size: "1.1rem"
+  body_size: "0.95rem"
+radii:
+  sm: 4
+  md: 8
+  lg: 16
+space:
+  xs: 4
+  sm: 6
+  md: 12
+  lg: 20
+  xl: 32

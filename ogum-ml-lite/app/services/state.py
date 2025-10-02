@@ -11,6 +11,8 @@ import yaml
 from ogum_lite.ui.presets import load_presets, merge_presets
 from ogum_lite.ui.workspace import Workspace
 
+from . import profiles
+
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PRESET_PATH = APP_ROOT / "presets.yaml"
 DEFAULT_WORKSPACE = Path.cwd() / "artifacts" / "ui-session"
@@ -35,6 +37,7 @@ def ensure_session(locale: str = "pt") -> None:
     st.session_state.setdefault(
         "preset_yaml", DEFAULT_PRESET_PATH.read_text(encoding="utf-8")
     )
+    st.session_state.setdefault("profile_name", "conventional")
 
 
 def get_workspace() -> Workspace:
@@ -77,6 +80,13 @@ def get_preset() -> dict[str, Any]:
     if isinstance(preset, dict):
         return preset
     preset = _load_preset_from_state()
+    profile_name = st.session_state.get("profile_name", "conventional")
+    try:
+        profile_data = profiles.load_profile(profile_name)
+    except FileNotFoundError:
+        profile_data = {}
+    if profile_data:
+        preset = profiles.apply_profile(preset, profile_data)
     st.session_state["preset"] = preset
     return preset
 
@@ -116,6 +126,31 @@ def reset_preset() -> dict[str, Any]:
     st.session_state["preset_yaml"] = text
     st.session_state.pop("preset", None)
     return get_preset()
+
+
+def set_profile(name: str) -> dict[str, Any]:
+    st.session_state["profile_name"] = name
+    st.session_state.pop("preset", None)
+    return get_preset()
+
+
+def get_profile_name() -> str:
+    return st.session_state.get("profile_name", "conventional")
+
+
+def available_profiles() -> dict[str, Path]:
+    return profiles.list_profiles()
+
+
+def profile_preview(name: str) -> dict[str, Any]:
+    try:
+        profile_data = profiles.load_profile(name)
+    except FileNotFoundError:
+        return {}
+    preview: dict[str, Any] = {}
+    for key, value in profile_data.items():
+        preview[key] = value
+    return preview
 
 
 def persist_upload(upload, *, subdir: str = "uploads") -> Path:

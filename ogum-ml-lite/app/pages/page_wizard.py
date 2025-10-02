@@ -13,11 +13,24 @@ import streamlit as st
 
 from ..design.a11y import aria_label, describe_chart, focus_hint
 from ..i18n.translate import I18N
-from ..services import run_cli, state, validators
+from ..services import run_cli, state, telemetry, validators
 
 STATE_KEY = "wizard_step"
 FLAGS_KEY = "wizard_flags"
 CONTEXT_KEY = "wizard_context"
+
+
+def _variant(name: str, default: str) -> str:
+    variants = st.session_state.get("ab_variants", {})
+    return variants.get(name, default)
+
+
+def _buttons_on_top() -> bool:
+    return _variant("run_buttons_position", "top") == "top"
+
+
+def _msc_layout() -> str:
+    return _variant("msc_controls_layout", "compact")
 
 
 @dataclass(frozen=True)
@@ -158,36 +171,53 @@ def _render_data_step(translator: I18N) -> None:
     selected = Path(option)
     ctx["selected_csv"] = str(selected)
 
-    cols = st.columns(2)
-    if cols[0].button(
-        translator.t("microcopy.validate_data"),
-        key="wizard_validate",
-        **aria_label(translator.t("microcopy.validate_data")),
-    ):
-        summary = validators.validate_long(selected)
-        if summary.ok:
-            st.toast(translator.t("microcopy.validation_ok"))
-        else:
-            st.toast(translator.t("microcopy.validation_warn"))
-        for issue in summary.issues:
-            st.warning(issue)
+    def _render_actions() -> None:
+        cols = st.columns(2)
+        if cols[0].button(
+            translator.t("microcopy.validate_data"),
+            key="wizard_validate",
+            **aria_label(translator.t("microcopy.validate_data")),
+        ):
+            summary = validators.validate_long(selected)
+            if summary.ok:
+                st.toast(translator.t("microcopy.validation_ok"))
+            else:
+                st.toast(translator.t("microcopy.validation_warn"))
+            for issue in summary.issues:
+                st.warning(issue)
 
-    if cols[1].button(
-        translator.t("microcopy.run_prep"),
-        key="wizard_prep",
-        **aria_label(translator.t("microcopy.run_prep")),
-    ):
-        with st.spinner(translator.t("microcopy.spinner_prep")):
-            result = run_cli.run_prep(selected, preset, workspace)
-        prep_csv = result.outputs["prep_csv"]
-        state.register_artifact("prep_csv", prep_csv, description="prep")
-        st.toast(translator.t("microcopy.prep_ready"))
-        _mark_complete("data")
+        if cols[1].button(
+            translator.t("microcopy.run_prep"),
+            key="wizard_prep",
+            **aria_label(translator.t("microcopy.run_prep")),
+        ):
+            telemetry.log_event(
+                "ui.action",
+                {
+                    "action": "run_prep",
+                    "experiment": "run_buttons_position",
+                    "variant": _variant("run_buttons_position", "top"),
+                },
+                workspace=workspace,
+            )
+            with st.spinner(translator.t("microcopy.spinner_prep")):
+                result = run_cli.run_prep(selected, preset, workspace)
+            prep_csv = result.outputs["prep_csv"]
+            state.register_artifact("prep_csv", prep_csv, description="prep")
+            st.toast(translator.t("microcopy.prep_ready"))
+            _mark_complete("data")
+
+    if _buttons_on_top():
+        _render_actions()
 
     preview_target = state.get_artifact("prep_csv") or selected
     if preview_target.exists():
         st.caption(translator.t("microcopy.focus_primary"))
         st.dataframe(pd.read_csv(preview_target).head(30))
+
+    if not _buttons_on_top():
+        st.divider()
+        _render_actions()
 
 
 def _render_features_step(translator: I18N) -> None:
@@ -208,11 +238,16 @@ def _render_features_step(translator: I18N) -> None:
     )
     ctx["features_use_prep"] = use_prep
 
-    if st.button(
-        translator.t("microcopy.run_features"),
-        key="wizard_features_run",
-        **aria_label(translator.t("microcopy.run_features")),
-    ):
+    def _run_features() -> None:
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": "run_features",
+                "experiment": "run_buttons_position",
+                "variant": _variant("run_buttons_position", "top"),
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_features")):
             result = run_cli.run_features(
                 prep_csv,
@@ -225,11 +260,27 @@ def _render_features_step(translator: I18N) -> None:
         st.toast(translator.t("microcopy.features_ready"))
         _mark_complete("features")
 
+    if _buttons_on_top() and st.button(
+        translator.t("microcopy.run_features"),
+        key="wizard_features_run",
+        **aria_label(translator.t("microcopy.run_features")),
+    ):
+        _run_features()
+
     features_csv = state.get_artifact("features_csv")
     if features_csv and features_csv.exists():
         st.dataframe(pd.read_csv(features_csv).head(25))
     else:
         st.info(translator.t("microcopy.missing_artifact"))
+
+    if not _buttons_on_top():
+        st.divider()
+        if st.button(
+            translator.t("microcopy.run_features"),
+            key="wizard_features_run_bottom",
+            **aria_label(translator.t("microcopy.run_features")),
+        ):
+            _run_features()
 
 
 def _render_msc_step(translator: I18N) -> None:
@@ -240,18 +291,57 @@ def _render_msc_step(translator: I18N) -> None:
         st.info(translator.t("wizard.blockers.need_prep"))
         return
 
-    st.caption(f"ⓘ {translator.t('wizard.tooltips.msc')}")
-    if st.button(
-        translator.t("microcopy.run_msc"),
-        key="wizard_msc_run",
-        **aria_label(translator.t("microcopy.run_msc")),
-    ):
+    layout_variant = _msc_layout()
+
+    def _run_msc(key_suffix: str) -> None:
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": "run_msc",
+                "experiment": "msc_controls_layout",
+                "variant": layout_variant,
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_msc")):
             result = run_cli.run_theta_msc(prep_csv, preset, workspace)
         for key, path in result.outputs.items():
             state.register_artifact(key, path, description="msc")
         st.toast(translator.t("microcopy.msc_ready"))
         _mark_complete("msc")
+
+    def _render_controls(key_suffix: str) -> None:
+        label = translator.t("microcopy.run_msc")
+        if layout_variant == "expanded":
+            cols = st.columns([3, 2])
+            with cols[0]:
+                if st.button(
+                    label,
+                    key=f"wizard_msc_run_{key_suffix}",
+                    **aria_label(label),
+                ):
+                    _run_msc(key_suffix)
+            with cols[1]:
+                msc_cfg = preset.get("msc", {})
+                st.markdown(
+                    "\n".join(
+                        [
+                            f"**Ea (kJ/mol)**: {msc_cfg.get('ea_kj', [])}",
+                            f"**Métrica**: {msc_cfg.get('metric', 'segmented')}",
+                        ]
+                    )
+                )
+        else:
+            if st.button(
+                label,
+                key=f"wizard_msc_run_{key_suffix}",
+                **aria_label(label),
+            ):
+                _run_msc(key_suffix)
+
+    st.caption(f"ⓘ {translator.t('wizard.tooltips.msc')}")
+    if _buttons_on_top():
+        _render_controls("top")
 
     curve_path = state.get_artifact("msc_curve")
     if curve_path and curve_path.exists():
@@ -267,6 +357,10 @@ def _render_msc_step(translator: I18N) -> None:
             key="wizard_msc_csv",
         )
 
+    if not _buttons_on_top():
+        st.divider()
+        _render_controls("bottom")
+
 
 def _render_segments_step(translator: I18N) -> None:
     workspace = state.get_workspace()
@@ -277,17 +371,30 @@ def _render_segments_step(translator: I18N) -> None:
         return
 
     st.caption(f"ⓘ {translator.t('wizard.tooltips.segments')}")
-    if st.button(
-        translator.t("microcopy.run_segments"),
-        key="wizard_segments_run",
-        **aria_label(translator.t("microcopy.run_segments")),
-    ):
+
+    def _run_segments(key_suffix: str) -> None:
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": "run_segments",
+                "experiment": "run_buttons_position",
+                "variant": _variant("run_buttons_position", "top"),
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_segments")):
             result = run_cli.run_segmentation(prep_csv, preset, workspace)
         segments_path = result.outputs["segments"]
         state.register_artifact("segments", segments_path, description="segments")
         st.toast(translator.t("microcopy.segments_ready"))
         _mark_complete("segments")
+
+    if _buttons_on_top() and st.button(
+        translator.t("microcopy.run_segments"),
+        key="wizard_segments_run",
+        **aria_label(translator.t("microcopy.run_segments")),
+    ):
+        _run_segments("top")
 
     segments_path = state.get_artifact("segments")
     if segments_path and segments_path.exists():
@@ -307,6 +414,15 @@ def _render_segments_step(translator: I18N) -> None:
             key="wizard_segments_json",
         )
 
+    if not _buttons_on_top():
+        st.divider()
+        if st.button(
+            translator.t("microcopy.run_segments"),
+            key="wizard_segments_run_bottom",
+            **aria_label(translator.t("microcopy.run_segments")),
+        ):
+            _run_segments("bottom")
+
 
 def _render_mechanism_step(translator: I18N) -> None:
     workspace = state.get_workspace()
@@ -317,17 +433,30 @@ def _render_mechanism_step(translator: I18N) -> None:
         return
 
     st.caption(f"ⓘ {translator.t('wizard.tooltips.mechanism')}")
-    if st.button(
-        translator.t("microcopy.run_mechanism"),
-        key="wizard_mechanism_run",
-        **aria_label(translator.t("microcopy.run_mechanism")),
-    ):
+
+    def _run_mechanism(key_suffix: str) -> None:
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": "run_mechanism",
+                "experiment": "run_buttons_position",
+                "variant": _variant("run_buttons_position", "top"),
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_mechanism")):
             result = run_cli.run_mechanism(theta_table, preset, workspace)
         mech_path = result.outputs["mechanism"]
         state.register_artifact("mechanism", mech_path, description="mechanism")
         st.toast(translator.t("microcopy.mechanism_ready"))
         _mark_complete("mechanism")
+
+    if _buttons_on_top() and st.button(
+        translator.t("microcopy.run_mechanism"),
+        key="wizard_mechanism_run",
+        **aria_label(translator.t("microcopy.run_mechanism")),
+    ):
+        _run_mechanism("top")
 
     mech_path = state.get_artifact("mechanism")
     if mech_path and mech_path.exists():
@@ -341,6 +470,15 @@ def _render_mechanism_step(translator: I18N) -> None:
             file_name=mech_path.name,
             key="wizard_mechanism_csv",
         )
+
+    if not _buttons_on_top():
+        st.divider()
+        if st.button(
+            translator.t("microcopy.run_mechanism"),
+            key="wizard_mechanism_run_bottom",
+            **aria_label(translator.t("microcopy.run_mechanism")),
+        ):
+            _run_mechanism("bottom")
 
 
 def _render_ml_step(translator: I18N) -> None:
@@ -356,40 +494,57 @@ def _render_ml_step(translator: I18N) -> None:
         st.warning(translator.t("wizard.blockers.need_mechanism"))
 
     st.caption(f"ⓘ {translator.t('wizard.tooltips.ml')}")
-    cols = st.columns(2)
-    if cols[0].button(
-        translator.t("microcopy.run_ml_cls"),
-        key="wizard_ml_cls",
-        **aria_label(translator.t("microcopy.run_ml_cls")),
-    ):
+
+    def _run_ml_train(action: str, runner: Callable[[], Any], key_suffix: str) -> None:
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": action,
+                "experiment": "run_buttons_position",
+                "variant": _variant("run_buttons_position", "top"),
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_ml")):
-            result = run_cli.run_ml_train_cls(features_csv, preset, workspace)
+            result = runner()
         outdir = result.outputs["outdir"]
-        state.register_artifact("ml_cls", outdir, description="ml_cls")
+        artifact_key = "ml_cls" if action == "run_ml_cls" else "ml_reg"
+        state.register_artifact(artifact_key, outdir, description=artifact_key)
         state.register_artifact(
-            "ml_cls_card", result.outputs["model_card"], description="ml_cls"
+            f"{artifact_key}_card",
+            result.outputs["model_card"],
+            description=artifact_key,
         )
         st.toast(translator.t("microcopy.ml_ready"))
         _mark_complete("ml")
         if result.stdout:
             st.code(result.stdout)
 
-    if cols[1].button(
-        translator.t("microcopy.run_ml_reg"),
-        key="wizard_ml_reg",
-        **aria_label(translator.t("microcopy.run_ml_reg")),
-    ):
-        with st.spinner(translator.t("microcopy.spinner_ml")):
-            result = run_cli.run_ml_train_reg(features_csv, preset, workspace)
-        outdir = result.outputs["outdir"]
-        state.register_artifact("ml_reg", outdir, description="ml_reg")
-        state.register_artifact(
-            "ml_reg_card", result.outputs["model_card"], description="ml_reg"
-        )
-        st.toast(translator.t("microcopy.ml_ready"))
-        _mark_complete("ml")
-        if result.stdout:
-            st.code(result.stdout)
+    def _render_train_buttons(position: str) -> None:
+        cols = st.columns(2)
+        if cols[0].button(
+            translator.t("microcopy.run_ml_cls"),
+            key=f"wizard_ml_cls_{position}",
+            **aria_label(translator.t("microcopy.run_ml_cls")),
+        ):
+            _run_ml_train(
+                "run_ml_cls",
+                lambda: run_cli.run_ml_train_cls(features_csv, preset, workspace),
+                position,
+            )
+        if cols[1].button(
+            translator.t("microcopy.run_ml_reg"),
+            key=f"wizard_ml_reg_{position}",
+            **aria_label(translator.t("microcopy.run_ml_reg")),
+        ):
+            _run_ml_train(
+                "run_ml_reg",
+                lambda: run_cli.run_ml_train_reg(features_csv, preset, workspace),
+                position,
+            )
+
+    if _buttons_on_top():
+        _render_train_buttons("top")
 
     models = sorted(workspace.path.rglob("*.joblib"))
     option = st.selectbox(
@@ -403,6 +558,15 @@ def _render_ml_step(translator: I18N) -> None:
         key="wizard_ml_predict",
         **aria_label(translator.t("microcopy.run_ml_predict")),
     ):
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": "run_ml_predict",
+                "experiment": "run_buttons_position",
+                "variant": _variant("run_buttons_position", "top"),
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_predict")):
             result = run_cli.run_ml_predict(
                 features_csv, Path(option), preset, workspace
@@ -411,6 +575,10 @@ def _render_ml_step(translator: I18N) -> None:
         state.register_artifact("predictions", predictions, description="predictions")
         st.toast(translator.t("microcopy.predict_ready"))
         _mark_complete("ml")
+
+    if not _buttons_on_top():
+        st.divider()
+        _render_train_buttons("bottom")
 
     predictions = state.get_artifact("predictions")
     if predictions and predictions.exists():
@@ -429,11 +597,16 @@ def _render_export_step(translator: I18N) -> None:
     preset = state.get_preset()
     st.caption(f"ⓘ {translator.t('wizard.tooltips.export')}")
 
-    if st.button(
-        translator.t("microcopy.run_export"),
-        key="wizard_export_run",
-        **aria_label(translator.t("microcopy.run_export")),
-    ):
+    def _run_export(key_suffix: str) -> None:
+        telemetry.log_event(
+            "ui.action",
+            {
+                "action": "run_export",
+                "experiment": "run_buttons_position",
+                "variant": _variant("run_buttons_position", "top"),
+            },
+            workspace=workspace,
+        )
         with st.spinner(translator.t("microcopy.spinner_export")):
             result = run_cli.export_report(workspace.path, preset, workspace)
         for key, path in result.outputs.items():
@@ -441,6 +614,13 @@ def _render_export_step(translator: I18N) -> None:
         state.register_artifact("session_zip", result.outputs["zip"], description="zip")
         st.toast(translator.t("microcopy.export_ready"))
         _mark_complete("export")
+
+    if _buttons_on_top() and st.button(
+        translator.t("microcopy.run_export"),
+        key="wizard_export_run",
+        **aria_label(translator.t("microcopy.run_export")),
+    ):
+        _run_export("top")
 
     report = state.get_artifact("export_report")
     if report and report.exists():
@@ -458,6 +638,15 @@ def _render_export_step(translator: I18N) -> None:
             file_name=zip_path.name,
             key="wizard_export_zip",
         )
+
+    if not _buttons_on_top():
+        st.divider()
+        if st.button(
+            translator.t("microcopy.run_export"),
+            key="wizard_export_run_bottom",
+            **aria_label(translator.t("microcopy.run_export")),
+        ):
+            _run_export("bottom")
 
 
 STEPS: tuple[WizardStep, ...] = (
@@ -479,14 +668,7 @@ STEPS: tuple[WizardStep, ...] = (
 )
 
 
-def render(translator: I18N) -> None:
-    """Render the guided wizard UI."""
-
-    st.subheader(translator.t("wizard.title"))
-    st.caption(translator.t("wizard.intro"))
-    st.caption(str(focus_hint(translator.t("wizard.focus_hint"))))
-
-    _init_state()
+def _render_wizard_layout(translator: I18N) -> None:
     current_index = st.session_state.get(STATE_KEY, 0)
     current_index = max(0, min(current_index, len(STEPS) - 1))
     st.session_state[STATE_KEY] = current_index
@@ -501,3 +683,30 @@ def render(translator: I18N) -> None:
     step.renderer(translator)
 
     _render_navigation(translator, current_index, step)
+
+
+def _render_tabs_layout(translator: I18N) -> None:
+    status_line = " ".join(("✅" if _is_complete(step.key) else "⚪" for step in STEPS))
+    st.caption(translator.t("wizard.tabs_status", status=status_line))
+    tab_labels = [translator.t(f"wizard.steps.{step.key}.title") for step in STEPS]
+    tabs = st.tabs(tab_labels)
+    for step, tab in zip(STEPS, tabs):
+        with tab:
+            st.markdown(f"### {translator.t(f'wizard.steps.{step.key}.title')}")
+            st.caption(translator.t(f"wizard.steps.{step.key}.description"))
+            step.renderer(translator)
+
+
+def render(translator: I18N) -> None:
+    """Render the guided wizard UI."""
+
+    st.subheader(translator.t("wizard.title"))
+    st.caption(translator.t("wizard.intro"))
+    st.caption(str(focus_hint(translator.t("wizard.focus_hint"))))
+
+    _init_state()
+    layout_variant = _variant("wizard_vs_tabs", "wizard")
+    if layout_variant == "tabs":
+        _render_tabs_layout(translator)
+    else:
+        _render_wizard_layout(translator)

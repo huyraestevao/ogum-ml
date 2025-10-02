@@ -1,0 +1,10 @@
+colors:
+  primary: "#7f3fbf"
+  surface: "#fdf7ff"
+  text: "#2c1a3f"
+typography:
+  title_size: "2rem"
+  body_size: "1rem"
+space:
+  md: 16
+  xl: 40

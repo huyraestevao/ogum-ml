@@ -1,0 +1,29 @@
+columns:
+  required:
+    - sample_id
+    - time_s
+    - temp_C
+    - rho_rel
+    - current_a
+msc:
+  ea_kj:
+    - 180
+    - 260
+    - 340
+  metric: segmented
+features:
+  include:
+    - global
+    - stage
+    - electric
+    - thermal
+ml:
+  targets:
+    - shrinkage_rel
+segmentation:
+  bounds:
+    - 60
+    - 75
+    - 92
+electric_features:
+  enabled: true
