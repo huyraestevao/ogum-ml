@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-
 from ogum_lite.blaine import fit_blaine_by_segments, fit_blaine_segment
 from ogum_lite.segmentation import Segment
 

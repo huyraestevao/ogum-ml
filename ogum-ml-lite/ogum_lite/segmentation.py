@@ -90,11 +90,15 @@ def compute_information_criterion(
         # Guard against log(0) when the fit is perfect
         sse = 1e-12
     mse = sse / float(n_points)
-    penalty = 2 * n_parameters if criterion == "aic" else n_parameters * np.log(n_points)
+    penalty = (
+        2 * n_parameters if criterion == "aic" else n_parameters * np.log(n_points)
+    )
     return n_points * float(np.log(mse)) + penalty
 
 
-def _linear_stats(x: np.ndarray, y: np.ndarray, start: int, end: int) -> LinearSegmentStats:
+def _linear_stats(
+    x: np.ndarray, y: np.ndarray, start: int, end: int
+) -> LinearSegmentStats:
     segment_x = x[start:end]
     segment_y = y[start:end]
     if segment_x.size < 2:
@@ -129,7 +133,9 @@ def _linear_stats(x: np.ndarray, y: np.ndarray, start: int, end: int) -> LinearS
     )
 
 
-def _iter_endpoints(n_points: int, n_segments: int, min_size: int) -> Iterable[list[int]]:
+def _iter_endpoints(
+    n_points: int, n_segments: int, min_size: int
+) -> Iterable[list[int]]:
     if n_segments <= 0:
         raise ValueError("n_segments must be positive")
     if min_size <= 0:
@@ -263,7 +269,9 @@ def segment_group(
     if method == "fixed":
         raw_segments = segment_fixed(time, y, thresholds=thresholds)
     elif method == "data":
-        raw_segments = segment_data_driven(time, y, n_segments=n_segments, min_size=min_size)
+        raw_segments = segment_data_driven(
+            time, y, n_segments=n_segments, min_size=min_size
+        )
     else:
         raise ValueError("method must be 'fixed' or 'data'")
 

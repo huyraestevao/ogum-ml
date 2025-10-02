@@ -126,9 +126,7 @@ def render_html_report(outdir: Path, context: dict, figures: dict[str, bytes]) -
     if isinstance(segments_summary, dict):
         segments_summary_html = "<ul>" + _dict_to_html_list(segments_summary) + "</ul>"
     elif isinstance(segments_summary, list):
-        items = "".join(
-            f"<li>{item}</li>" for item in segments_summary
-        )
+        items = "".join(f"<li>{item}</li>" for item in segments_summary)
         segments_summary_html = f"<ul>{items}</ul>"
 
     segments_table_html = _table_to_html(segments_table)

@@ -30,10 +30,10 @@ de usar em Google Colab e pronto para integrações com pipelines de ML.
 - **Pronto para ML**: módulo `features` com engenharia global e stage-aware,
   integração com `theta_msc` e `ml_hooks` para pipelines supervisionados.
 
-## Frontend Alpha (Fase 7)
+## Frontend Evolutivo (Fase 8)
 
-Esta fase adiciona um frontend interativo completo para executar o pipeline
-Ogum Lite de ponta a ponta em dados reais.
+O frontend agora usa uma arquitetura modular com design system leve, theming
+dinâmico, i18n e camada de serviços compartilhada.
 
 ### Streamlit (painel principal)
 
@@ -41,33 +41,34 @@ Ogum Lite de ponta a ponta em dados reais.
 streamlit run app/streamlit_app.py
 ```
 
-O painel está organizado em abas que refletem o fluxo recomendado:
+- **Layout modular**: shell comum em `app/design/layout.py` com sidebar para
+  workspace/preset, header com toggle de tema e export, e páginas em
+  `app/pages/*.py`.
+- **Theming**: `app/design/theme.py` expõe `get_theme(dark)` para claro/escuro;
+  alternância em tempo real sem recarregar o app.
+- **i18n**: seletor de idioma (pt/en) alimenta `app/i18n/translate.py` com
+  catálogos JSON; textos respondem imediatamente à troca de locale.
+- **Services**: todas as ações orquestram a CLI via `app/services/run_cli.py`
+  (tenacity + logs + telemetria) reaproveitando `ogum_lite.ui.orchestrator`.
+- **UX**: toasts, validações, barras de progresso e previews foram integrados às
+  páginas de Prep, Features, θ/MSC, Segmentação, Mecanismo, ML e Export.
+- **Estado**: `app/services/state.py` centraliza `session_state`, workspace e
+  registro de artefatos; telemetria opcional (`OGUML_TELEMETRY=0` desliga).
 
-1. **Workspace & Presets** – escolha o diretório base da sessão, carregue/edite
-   presets YAML e acompanhe o log de proveniência (`run_log.jsonl`).
-2. **Data Prep & Validate** – faça upload de CSV longos, execute validação com
-   `validators.validate_long_df` e acione `preprocess derive` via CLI.
-3. **Features** – derive a tabela de features, valide-a e visualize as primeiras
-   linhas diretamente no app.
-4. **θ / MSC** – compute θ(Ea), gere o colapso MSC (CSV/PNG) e baixe o pacote
-   de curvas `theta_curves.zip`.
-5. **Segmentação & Mecanismo** – rode segmentação (fixed/data) e o relatório de
-   mudança de mecanismo (Blaine/n) reaproveitando os módulos centrais.
-6. **ML** – treine classificadores/regressores, inspeccione o `model_card.json`
-   e gere predições usando artefatos do workspace.
-7. **Export** – consolide um relatório XLSX (`export xlsx`) e baixe um ZIP com
-   todos os artefatos da sessão.
+#### Como estender com nova página
 
-O preset padrão fica em `app/presets.yaml` e pode ser salvo/mesclado via UI.
+1. Crie `app/pages/page_nova.py` com `render(translator: I18N) -> None`.
+2. Use componentes do design system (`card`, `alert`, `toolbar`) e serviços.
+3. Registre a página em `PAGES` dentro de `app/streamlit_app.py`.
 
-### Gradio (alternativa leve)
+### Gradio (fallback)
 
 ```bash
 python app/gradio_app.py
 ```
 
-O modo Gradio expõe um formulário compacto (upload → preset → executar) que
-orquestra os mesmos comandos CLI e disponibiliza o ZIP consolidado.
+Interface Blocks compacta que reutiliza `app/services/run_cli.py` para rodar o
+pipeline e gerar o ZIP com os artefatos do workspace.
 
 ## Instalação
 

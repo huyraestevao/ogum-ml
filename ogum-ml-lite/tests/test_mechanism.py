@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-
 from ogum_lite.mechanism import detect_mechanism_change
 
 

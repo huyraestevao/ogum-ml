@@ -53,8 +53,8 @@ from .reports import (
     plot_regression_scatter,
     render_html_report,
 )
-from .stages import DEFAULT_STAGES
 from .segmentation import segment_dataframe
+from .stages import DEFAULT_STAGES
 from .theta_msc import OgumLite, score_activation_energies
 from .validators import validate_feature_df, validate_long_df
 
@@ -2118,7 +2118,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser_msc.set_defaults(func=cmd_msc)
 
-    parser_maps = subparsers.add_parser("maps", help="Gerar heatmaps de Blaine/segmentos")
+    parser_maps = subparsers.add_parser(
+        "maps", help="Gerar heatmaps de Blaine/segmentos"
+    )
     parser_maps.add_argument(
         "--input",
         type=Path,

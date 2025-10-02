@@ -1,5 +1,4 @@
 import pandas as pd
-
 from ogum_lite.maps import prepare_segment_heatmap, render_segment_heatmap
 
 
@@ -23,5 +22,3 @@ def test_prepare_segment_heatmap_extracts_blaine_columns(tmp_path) -> None:
     output.write_bytes(png_bytes)
     assert output.exists()
     assert output.stat().st_size > 0
-
-
