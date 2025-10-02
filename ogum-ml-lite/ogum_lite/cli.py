@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
 import tempfile
 import zipfile
@@ -25,6 +26,7 @@ from sklearn.metrics import (
     mean_squared_error,
 )
 
+from . import scheduler
 from .arrhenius import arrhenius_lnT_dy_dt_vs_invT, fit_arrhenius_global
 from .exporters import export_onnx, export_xlsx
 from .features import arrhenius_feature_table, build_feature_store, build_feature_table
@@ -36,6 +38,7 @@ from .io_mapping import (
     infer_mapping,
     read_table,
 )
+from .jobs import DEFAULT_JOBS_PATH, Job, JobsDB
 from .maps import prepare_segment_heatmap, render_segment_heatmap
 from .mechanism import detect_mechanism_change
 from .ml_experiments import compare_models, list_available_models, run_benchmark_matrix
@@ -1650,9 +1653,136 @@ def cmd_ui(_: argparse.Namespace) -> None:
     launch_ui()
 
 
+def _jobs_db(path: Path | None) -> JobsDB:
+    return JobsDB(path or DEFAULT_JOBS_PATH)
+
+
+def _parse_job_datetime(raw: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:  # pragma: no cover - defensive
+        raise argparse.ArgumentTypeError(
+            "Use ISO format 'YYYY-MM-DD HH:MM[:SS]' for --at"
+        ) from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_job_timestamp(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def cmd_jobs_submit(args: argparse.Namespace) -> None:
+    db = _jobs_db(args.db)
+    cmd = shlex.split(args.cmd)
+    if not cmd:
+        raise SystemExit("Provide a non-empty command via --cmd")
+    job = Job(cmd=cmd)
+    job_dir = db.job_directory(job.id)
+    job = job.model_copy(
+        update={"outdir": str(job_dir), "log_file": str(job_dir / "job.log")}
+    )
+    db.add(job)
+
+    if args.at:
+        run_at = _parse_job_datetime(args.at)
+        scheduler.schedule_job(job, db, run_at)
+        when_text = run_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        print(f"Job {job.id} agendado para {when_text}")
+    else:
+        scheduler.start_job(job, db)
+        print(f"Job {job.id} enviado para execução")
+
+
+def cmd_jobs_status(args: argparse.Namespace) -> None:
+    db = _jobs_db(args.db)
+    jobs = db.list()
+    if not jobs:
+        print("Nenhum job cadastrado.")
+        return
+    header = f"{'ID':36}  {'Status':10}  {'Criado':19}  Comando"
+    print(header)
+    print("-" * len(header))
+    for job in jobs:
+        created = _format_job_timestamp(job.created_at)
+        cmd = " ".join(job.cmd)
+        print(f"{job.id}  {job.status:<10}  {created}  {cmd}")
+
+
+def cmd_jobs_logs(args: argparse.Namespace) -> None:
+    db = _jobs_db(args.db)
+    job = db.get(args.job_id)
+    log_path = Path(job.log_file or db.job_directory(job.id) / "job.log")
+    if not log_path.exists():
+        print("Log ainda não disponível.")
+        return
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    tail = lines[-args.tail :] if args.tail else lines
+    print("\n".join(tail))
+
+
+def cmd_jobs_cancel(args: argparse.Namespace) -> None:
+    db = _jobs_db(args.db)
+    cancelled = scheduler.cancel_job(args.job_id, db)
+    if cancelled:
+        print(f"Job {args.job_id} cancelado.")
+    else:
+        print(f"Job {args.job_id} não está em execução.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ogum ML Lite CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    parser_jobs = subparsers.add_parser("jobs", help="Scheduler e monitor de jobs")
+    parser_jobs.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help=(
+            "Arquivo JSON que mantém o estado dos jobs "
+            "(padrão: workspace/jobs/jobs.json)."
+        ),
+    )
+    jobs_subparsers = parser_jobs.add_subparsers(dest="jobs_command", required=True)
+
+    parser_jobs_submit = jobs_subparsers.add_parser(
+        "submit", help="Registrar um novo job"
+    )
+    parser_jobs_submit.add_argument(
+        "--cmd",
+        required=True,
+        help='Comando a ser executado (ex.: "ml bench --table features.csv ...")',
+    )
+    parser_jobs_submit.add_argument(
+        "--at",
+        help="Agenda para o futuro usando timezone UTC (YYYY-MM-DD HH:MM).",
+    )
+    parser_jobs_submit.set_defaults(func=cmd_jobs_submit)
+
+    parser_jobs_status = jobs_subparsers.add_parser(
+        "status", help="Listar jobs cadastrados"
+    )
+    parser_jobs_status.set_defaults(func=cmd_jobs_status)
+
+    parser_jobs_logs = jobs_subparsers.add_parser("logs", help="Mostrar log de um job")
+    parser_jobs_logs.add_argument("job_id", help="Identificador do job")
+    parser_jobs_logs.add_argument(
+        "--tail",
+        type=int,
+        default=20,
+        help="Quantidade de linhas finais do log a exibir (padrão: 20).",
+    )
+    parser_jobs_logs.set_defaults(func=cmd_jobs_logs)
+
+    parser_jobs_cancel = jobs_subparsers.add_parser(
+        "cancel", help="Cancelar job em execução"
+    )
+    parser_jobs_cancel.add_argument("job_id", help="Identificador do job")
+    parser_jobs_cancel.set_defaults(func=cmd_jobs_cancel)
 
     parser_validate = subparsers.add_parser("validate", help="Data validation helpers")
     validate_subparsers = parser_validate.add_subparsers(

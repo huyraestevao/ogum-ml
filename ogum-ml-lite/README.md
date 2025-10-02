@@ -188,6 +188,52 @@ com aviso `[skip]`.
 > os parâmetros ao instanciar os pipelines (ex.: `--models rf` para testes
 > rápidos ou adaptando o código/factory antes da rodada final).
 
+## Fase 12 — Scheduler & Jobs
+
+### Visão geral
+
+- **Jobs assíncronos**: qualquer comando da CLI pode ser enviado para execução
+  em segundo plano (`jobs submit --cmd "ml bench ..."`).
+- **Persistência**: metadados e estados ficam em `workspace/jobs/jobs.json`, com
+  diretórios individuais `workspace/jobs/<job_id>/` para logs e artefatos.
+- **Agendamento**: use `--at "2025-01-10 12:00"` para agendar execuções
+  futuras.
+- **Monitoramento unificado**: Streamlit ganha a página "Jobs Monitor" e o
+  Gradio recebe a aba "Jobs" para acompanhar execuções, visualizar logs e
+  cancelar jobs.
+
+### CLI
+
+```bash
+# Submeter um benchmark de ML em background
+python -m ogum_lite.cli jobs submit \
+  --cmd "ml bench --table features.csv --task cls --targets technique --models rf"
+
+# Agendar para o futuro (UTC)
+python -m ogum_lite.cli jobs submit \
+  --cmd "ml bench --table features.csv --task cls --targets technique --models rf" \
+  --at "2025-01-10 12:00"
+
+# Listar jobs e estados atuais
+python -m ogum_lite.cli jobs status
+
+# Visualizar o tail do log
+python -m ogum_lite.cli jobs logs <job_id>
+
+# Cancelar execução em andamento
+python -m ogum_lite.cli jobs cancel <job_id>
+```
+
+### Frontend
+
+- **Streamlit**: a página "Jobs Monitor" lista todos os jobs, atualiza a cada
+  poucos segundos e permite abrir o log ou cancelar execuções ativas.
+- **Gradio**: a aba "Jobs" replica as ações principais (listar, ver log e
+  cancelar) dentro da interface Blocks.
+
+> ℹ️ Todos os artefatos gerados por jobs ficam em `workspace/jobs/<job_id>/`,
+> mantendo o histórico completo da execução.
+
 ## Instalação
 
 ```bash
