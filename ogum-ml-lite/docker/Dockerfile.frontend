@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY ogum-ml-lite/pyproject.toml /app/pyproject.toml
+COPY ogum-ml-lite /app/ogum-ml-lite
+
+RUN pip install --no-cache-dir /app/ogum-ml-lite
+
+ENV OGUM_API_URL=http://localhost:8000
+ENV OGUM_STORAGE_PATH=/data/storage
+VOLUME ["/data/storage"]
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app/streamlit_server.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
