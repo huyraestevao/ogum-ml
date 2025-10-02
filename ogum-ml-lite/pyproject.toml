@@ -25,6 +25,9 @@ dependencies = [
     "pydantic",
     "fastapi",
     "uvicorn",
+    "python-jose[cryptography]",
+    "python-multipart",
+    "requests",
     "xlrd",
     "pyyaml",
 ]
@@ -54,7 +57,7 @@ xgb = ["xgboost>=2,<3"]
 sim = ["meshio>=5,<6"]
 
 [tool.setuptools.packages.find]
-include = ["ogum_lite", "app"]
+include = ["ogum_lite", "app", "server"]
 
 [tool.black]
 line-length = 88

@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY ogum-ml-lite/pyproject.toml /app/pyproject.toml
+COPY ogum-ml-lite /app/ogum-ml-lite
+
+RUN pip install --no-cache-dir /app/ogum-ml-lite
+
+ENV OGUM_STORAGE_PATH=/data/storage
+VOLUME ["/data/storage"]
+
+EXPOSE 8000
+
+CMD ["uvicorn", "server.api_main:app", "--host", "0.0.0.0", "--port", "8000"]

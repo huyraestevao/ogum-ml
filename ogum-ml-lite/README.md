@@ -726,3 +726,70 @@ tests/
 - Registrar pipelines de classificação/regressão (`register_pipeline`).
 - Carregar modelos treinados (joblib/MLflow) via `load_pipeline`.
 - Padronizar contratos de entrada/saída para integração com Ogum completo.
+
+## Fase 15 — Deploy Colaborativo
+
+Implemente e rode o backend FastAPI + frontend Streamlit em modo multiusuário.
+
+### Componentes
+
+- **API FastAPI** (`server.api_main`): autenticação JWT, runs, jobs, comparações e registro de simulações.
+- **Frontend Streamlit** (`app/streamlit_server.py`): abas para login, runs, jobs, comparações e simulações.
+- **Storage centralizado** (`server_storage/`): diretórios `runs/`, `jobs/`, `sims/` e `users/` compartilhados via volume.
+- **Reverse proxy** (Nginx) expondo `/` para o Streamlit e `/api/` para a API.
+
+### Executar localmente
+
+```bash
+cd docker
+docker-compose up --build
+```
+
+- API: http://localhost:8000/docs
+- Frontend: http://localhost:8501
+- Proxy unificado: http://localhost:8080 (frontend) e http://localhost:8080/api/ (API)
+
+### Usuários e autenticação
+
+1. Gere `server_storage/users/users.json` com o usuário inicial:
+
+   ```bash
+   cd ..  # diretório ogum-ml-lite
+   python - <<'PY'
+from pathlib import Path
+from server import auth
+
+users_dir = Path("server_storage/users")
+users_dir.mkdir(parents=True, exist_ok=True)
+payload = '[{"username":"admin","password_hash":"' + auth.hash_password("admin123") + '","role":"admin"}]'
+(users_dir / "users.json").write_text(payload)
+PY
+   cd docker
+   ```
+
+2. Faça login via API:
+
+   ```bash
+   curl -X POST http://localhost:8000/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"username":"admin","password":"admin123"}'
+   ```
+
+3. Use o token retornado nas chamadas protegidas (`Authorization: Bearer <token>`).
+
+### Rotas principais
+
+- `POST /auth/login` – autenticação com usuário/senha.
+- `GET /runs/list` – lista execuções disponíveis.
+- `POST /runs/upload` – envia novo artefato de run.
+- `GET /jobs/list` – status dos jobs monitorados.
+- `POST /compare/run` – agenda comparação entre runs.
+- `POST /sim/import` – registra bundle de simulação.
+
+### Smoke tests
+
+```bash
+pytest -q tests/test_auth.py tests/test_server_api.py
+```
+
+Os testes criam storage temporário, validam login, listagem de runs, upload e registro de simulação.

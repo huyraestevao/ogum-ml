@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      OGUM_STORAGE_PATH: /data/storage
+      OGUM_SERVER_SECRET: change-me-in-prod
+    volumes:
+      - ../server_storage:/data/storage
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    environment:
+      OGUM_API_URL: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "8501:8501"
+
+  nginx:
+    image: nginx:1.25-alpine
+    depends_on:
+      - api
+      - frontend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
