@@ -3,6 +3,7 @@
 from . import (
     page_export,
     page_features,
+    page_jobs,
     page_mechanism,
     page_ml,
     page_msc,
@@ -20,4 +21,5 @@ __all__ = [
     "page_prep",
     "page_segments",
     "page_wizard",
+    "page_jobs",
 ]

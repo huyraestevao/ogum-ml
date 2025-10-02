@@ -12,6 +12,7 @@ from app.i18n.translate import I18N
 from app.pages import (
     page_export,
     page_features,
+    page_jobs,
     page_mechanism,
     page_ml,
     page_msc,
@@ -30,6 +31,7 @@ PAGES: dict[str, tuple[str, Callable[[I18N], None]]] = {
     "mechanism": ("menu.mechanism", page_mechanism.render),
     "ml": ("menu.ml", page_ml.render),
     "export": ("menu.export", page_export.render),
+    "jobs": ("menu.jobs", page_jobs.render),
 }
 
 

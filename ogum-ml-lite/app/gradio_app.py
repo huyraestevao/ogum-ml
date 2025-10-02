@@ -9,6 +9,7 @@ import yaml
 from ogum_lite.ui.presets import load_presets, merge_presets
 from ogum_lite.ui.workspace import Workspace
 
+from app import gradio_jobs
 from app.services import run_cli
 
 APP_DIR = Path(__file__).parent
@@ -59,21 +60,26 @@ def main() -> None:
         DEFAULT_PRESET.read_text(encoding="utf-8") if DEFAULT_PRESET.exists() else ""
     )
     with gr.Blocks(title="Ogum-ML") as demo:
-        gr.Markdown("## Ogum-ML — Pipeline Lite")
-        with gr.Row():
-            file_input = gr.File(
-                label="CSV longo", file_types=[".csv"], file_count="single"
-            )
-            preset_input = gr.Textbox(label="Preset YAML", lines=18, value=preset_text)
-        run_btn = gr.Button("Executar pipeline")
-        log_output = gr.Textbox(label="Log", lines=12)
-        zip_output = gr.File(label="ZIP de artefatos")
+        with gr.Tab("Pipeline"):
+            gr.Markdown("## Ogum-ML — Pipeline Lite")
+            with gr.Row():
+                file_input = gr.File(
+                    label="CSV longo", file_types=[".csv"], file_count="single"
+                )
+                preset_input = gr.Textbox(
+                    label="Preset YAML", lines=18, value=preset_text
+                )
+            run_btn = gr.Button("Executar pipeline")
+            log_output = gr.Textbox(label="Log", lines=12)
+            zip_output = gr.File(label="ZIP de artefatos")
 
-        run_btn.click(
-            run_pipeline,
-            inputs=[file_input, preset_input],
-            outputs=[log_output, zip_output],
-        )
+            run_btn.click(
+                run_pipeline,
+                inputs=[file_input, preset_input],
+                outputs=[log_output, zip_output],
+            )
+
+        gradio_jobs.render_jobs_tab()
 
     if __name__ == "__main__":
         demo.launch()

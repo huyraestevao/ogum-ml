@@ -11,7 +11,8 @@
     "segments": "Segmentation",
     "mechanism": "Mechanism",
     "ml": "ML Models",
-    "export": "Export"
+    "export": "Export",
+    "jobs": "Jobs Monitor"
   },
   "workspace": {
     "title": "Workspace",
