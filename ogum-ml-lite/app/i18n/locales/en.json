@@ -4,6 +4,7 @@
     "subtitle": "Evolutionary frontend"
   },
   "menu": {
+    "wizard": "Guided mode",
     "prep": "Prep & Validate",
     "features": "Features",
     "msc": "θ & MSC",
@@ -39,5 +40,104 @@
     "preset_applied": "[ok] Preset updated",
     "validation_ok": "[ok] File validated",
     "validation_failed": "[warn] Issues detected"
+  },
+  "wizard": {
+    "title": "Guided mode",
+    "intro": "Run the full pipeline step by step.",
+    "focus_hint": "Use Tab/Shift+Tab to move and Enter to trigger buttons.",
+    "actions": {
+      "previous": "Back",
+      "next": "Next",
+      "run_step": "Run step",
+      "open_artifact": "Open artifacts"
+    },
+    "tooltips": {
+      "data": "Upload or select an existing CSV and validate it before preparing.",
+      "features": "Build features from the prepared CSV or reuse a custom file.",
+      "msc": "Run θ/MSC choosing your preferred collapse metric.",
+      "segments": "Compute segmentation and Blaine using fixed or data-driven strategy.",
+      "mechanism": "Analyse mechanism change with τ and R².",
+      "ml": "Train classification or regression models and optionally generate predictions.",
+      "export": "Finish by exporting the report and the session ZIP bundle."
+    },
+    "steps": {
+      "data": {
+        "title": "Data",
+        "description": "Select, validate and prepare the base dataset."
+      },
+      "features": {
+        "title": "Features",
+        "description": "Build global or reprocessed features."
+      },
+      "msc": {
+        "title": "θ & MSC",
+        "description": "Inspect curve collapse and Ea metrics."
+      },
+      "segments": {
+        "title": "Segmentation & Blaine",
+        "description": "Generate fixed or data-driven segmentation."
+      },
+      "mechanism": {
+        "title": "Mechanism",
+        "description": "Mechanism change report per sample."
+      },
+      "ml": {
+        "title": "ML",
+        "description": "Train models and optionally produce predictions."
+      },
+      "export": {
+        "title": "Export",
+        "description": "Assemble the final report and ZIP package."
+      }
+    },
+    "blockers": {
+      "need_prep": "[warn] Generate the prepared CSV before moving on.",
+      "need_features": "[warn] Build the features file to continue.",
+      "need_theta": "[warn] Run θ/MSC to unlock this step.",
+      "need_segments": "[warn] Run segmentation first.",
+      "need_mechanism": "[warn] Run mechanism before ML.",
+      "need_ml": "[warn] Train a model before exporting."
+    },
+    "features": {
+      "use_prep": "Use prep.csv as input"
+    }
+  },
+  "microcopy": {
+    "select_csv": "Select the CSV",
+    "upload_csv": "Upload CSV",
+    "validate_data": "Validate data",
+    "run_prep": "Prepare data",
+    "run_features": "Generate features",
+    "run_msc": "Run MSC",
+    "run_segments": "Generate segmentation",
+    "run_mechanism": "Run mechanism",
+    "run_ml_cls": "Train classification",
+    "run_ml_reg": "Train regression",
+    "run_ml_predict": "Generate predictions",
+    "run_export": "Build export",
+    "prep_ready": "[ok] Data prepared",
+    "validation_ok": "[ok] Data validated successfully",
+    "validation_warn": "[warn] Validation reported warnings",
+    "features_ready": "[ok] Features available",
+    "msc_ready": "[ok] θ/MSC updated",
+    "segments_ready": "[ok] Segmentation saved",
+    "mechanism_ready": "[ok] Mechanism report saved",
+    "ml_ready": "[ok] ML artifacts generated",
+    "predict_ready": "[ok] Predictions ready",
+    "export_ready": "[ok] Report and ZIP updated",
+    "missing_artifact": "[warn] No artifact available",
+    "spinner_prep": "Running preparation...",
+    "spinner_features": "Building features...",
+    "spinner_msc": "Running θ/MSC...",
+    "spinner_segments": "Computing segmentation...",
+    "spinner_mechanism": "Computing mechanism...",
+    "spinner_ml": "Training model...",
+    "spinner_predict": "Generating predictions...",
+    "spinner_export": "Assembling export...",
+    "focus_primary": "Focus on this step: review results before moving on.",
+    "describe_msc": "MSC: mean curve with ±1σ band.",
+    "describe_segments": "Segments: table with fractions per stage.",
+    "describe_mechanism": "Mechanism: report with τ, R² and detected thresholds.",
+    "describe_ml": "ML: cross-validation metrics per model."
   }
 }

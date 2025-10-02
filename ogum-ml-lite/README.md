@@ -55,11 +55,26 @@ streamlit run app/streamlit_app.py
 - **Estado**: `app/services/state.py` centraliza `session_state`, workspace e
   registro de artefatos; telemetria opcional (`OGUML_TELEMETRY=0` desliga).
 
+### Modo guiado (Wizard)
+
+- Disponível no menu lateral como primeira opção (`Modo guiado`).
+- Bloqueia a navegação enquanto os artefatos obrigatórios não estiverem prontos e exibe toasts `[ok]/[warn]`.
+- Cada etapa reutiliza os serviços existentes (`run_cli`) com tooltips, descrições acessíveis e persistência em `session_state`.
+- Documentação completa de UX e microcópia em [`docs/DESIGN_SPEC_UX.md`](docs/DESIGN_SPEC_UX.md) e [`docs/MICROCOPY_*.yaml`](docs).
+
 #### Como estender com nova página
 
 1. Crie `app/pages/page_nova.py` com `render(translator: I18N) -> None`.
 2. Use componentes do design system (`card`, `alert`, `toolbar`) e serviços.
 3. Registre a página em `PAGES` dentro de `app/streamlit_app.py`.
+4. Adicione microcópia em `docs/MICROCOPY_*.yaml` e traduções em `app/i18n/locales/*.json`.
+5. Rode `python -m app.services.i18n_lint` e `pytest -q` para garantir cobertura.
+
+#### Qualidade contínua
+
+- `python -m app.services.i18n_lint` garante paridade de chaves pt/en.
+- `python -m app.services.linkcheck` valida links internos do README e da Design Spec.
+- `pytest -q` cobre o fluxo guiado, helpers de acessibilidade e integrações básicas.
 
 ### Gradio (fallback)
 

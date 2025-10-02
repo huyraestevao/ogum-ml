@@ -8,6 +8,7 @@ from . import (
     page_msc,
     page_prep,
     page_segments,
+    page_wizard,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "page_msc",
     "page_prep",
     "page_segments",
+    "page_wizard",
 ]
