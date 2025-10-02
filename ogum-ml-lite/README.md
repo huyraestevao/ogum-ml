@@ -280,6 +280,76 @@ python -m ogum_lite.cli jobs cancel <job_id>
 > ℹ️ Todos os artefatos gerados por jobs ficam em `workspace/jobs/<job_id>/`,
 > mantendo o histórico completo da execução.
 
+## Fase 14 — Ponte FEM/Simulação
+
+Uma camada opcional conecta resultados de simulação numérica (FEM térmico,
+co-sinterização, campos elétricos) ao pipeline de features do Ogum-ML.
+
+### Formato canônico do bundle
+
+`sim import` gera um diretório com:
+
+- `meta.json`: solver, versão, unidades por campo (ex.: `temp_C → C`).
+- `mesh.json`: contagem de nós/células e tipo de elemento (`tri`, `tet`, ...).
+- `times.npy`: série temporal em segundos.
+- `manifest.json`: mapeia campos → arquivos salvos.
+- `node_fields/<campo>_NNN.npy` e `cell_fields/<campo>_NNN.npy`: arrays por
+  passo de tempo.
+
+Os arquivos podem ser versionados ou movidos entre workspaces sem dependências
+extras.
+
+### Ingestão
+
+```bash
+# Séries VTK (requer meshio via extra opcional)
+python -m ogum_lite.cli sim import --src data/sim/vtk_series --format vtk --outdir artifacts/sim/run_vtk
+
+# XDMF único (idem meshio)
+python -m ogum_lite.cli sim import --src data/sim/results.xdmf --format xdmf --outdir artifacts/sim/run_xdmf
+
+# CSV com séries escalares (sem dependências externas)
+python -m ogum_lite.cli sim import --src data/sim/summary.csv --format csv --outdir artifacts/sim/run_csv
+```
+
+VTK/XDMF usam `meshio`; instale com `pip install "ogum-ml[sim]"`. Ausente o
+pacote, as funções exibem erro orientando a instalação, enquanto CSV continua
+funcionando normalmente.
+
+### Features globais e segmentadas
+
+```bash
+python -m ogum_lite.cli sim features \
+  --bundle artifacts/sim/run_csv \
+  --segments "0,120;120,240" \
+  --out artifacts/features_sim.csv
+```
+
+O CSV resultante contém métricas globais (`T_max_C`, `t_at_T_max_s`,
+`sigma_vm_max_MPa`, integrais de tempo) e colunas extras por segmento com o
+sufixo `segment_<idx>_<t0>_<t1>`.
+
+### Vincular a runs reais
+
+```bash
+python -m ogum_lite.cli sim link \
+  --exp-features artifacts/features_exp.csv \
+  --sim-features artifacts/features_sim.csv \
+  --map link.yaml \
+  --out artifacts/features_exp_sim.csv
+```
+
+O arquivo `link.yaml` define `sample_id: sim_id`; se ausente, o comando tenta
+coincidir nomes de arquivos/pastas. As colunas de simulação são sufixadas com
+`_sim`, prontas para entrar em `features build` ou ML.
+
+### Notas de unidades e export
+
+- Temperaturas em Kelvin são convertidas automaticamente para °C (`temp_C`).
+- Campos elétricos → `E_V_per_m`; tensões de von Mises → `von_mises_MPa`.
+- Recomendação: exportar `temp`, `sigma_vm`, `electric_field` e escala de tempo
+  em segundos a partir do solver.
+
 ## Instalação
 
 ```bash
