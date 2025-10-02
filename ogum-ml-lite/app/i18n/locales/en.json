@@ -12,7 +12,8 @@
     "mechanism": "Mechanism",
     "ml": "ML Models",
     "export": "Export",
-    "jobs": "Jobs Monitor"
+    "jobs": "Jobs Monitor",
+    "edu": "Educational mode"
   },
   "workspace": {
     "title": "Workspace",
@@ -149,5 +150,81 @@
     "describe_segments": "Segments: table with fractions per stage.",
     "describe_mechanism": "Mechanism: report with τ, R² and detected thresholds.",
     "describe_ml": "ML: cross-validation metrics per model."
+  }
+  ,
+  "edu": {
+    "title": "Educational mode",
+    "intro": "Learn θ, MSC collapse and Blaine n with guided visuals, bilingual copy and auto-graded exercises.",
+    "steps": {
+      "load": {
+        "title": "1. Load data",
+        "hint": "Upload a long-format CSV or reuse the sample to practice."
+      },
+      "simulate": {
+        "title": "2. θ, MSC & n",
+        "hint": "Use the controls to tune Ea, collapse curves and run the Blaine linearisation."
+      },
+      "explore": {
+        "title": "3. Explore & export",
+        "hint": "Answer the guided exercises and export an educational summary."
+      }
+    },
+    "labels": {
+      "upload": "Upload long CSV",
+      "dataset_select": "Select dataset",
+      "ea_slider": "Ea (kJ/mol)",
+      "seg_55": "Normalised Θ @55%",
+      "seg_70": "Normalised Θ @70%",
+      "seg_90": "Normalised Θ @90%"
+    },
+    "actions": {
+      "validate": "Validate",
+      "prepare": "Prepare",
+      "compute_theta": "Compute θ",
+      "collapse_msc": "Collapse MSC",
+      "linearize_blaine": "Linearise Blaine",
+      "check": "Check answer",
+      "export_html": "Export educational HTML",
+      "export_pdf": "Export educational PDF",
+      "open_advanced": "Open advanced mode"
+    },
+    "cards": {
+      "theta": {
+        "title": "Why normalise time?",
+        "body": "θ accumulates the thermal effect via the Arrhenius integral, allowing comparable cycles. θ condenses temperature and time into a single scale.",
+        "formula": "\\Theta(t) = \\int_0^t e^{{-E_a/(R T(\\tau))}} d\\tau"
+      },
+      "blaine": {
+        "title": "Blaine linearisation",
+        "body": "Assuming y = k \\Theta^n, taking ln yields a straight line: ln(y) = ln(k) + n ln(\\Theta). The slope reveals n.",
+        "formula": "\\ln(y) = \\ln(k) + n\\,\\ln(\\Theta)"
+      }
+    },
+    "captions": {
+      "theta": "θ tracks the accumulated thermal cycle.",
+      "collapse": "Curves collapsed by normalised θ.",
+      "blaine": "ln(θ) × ln(y) plot with linear fit."
+    },
+    "messages": {
+      "upload_success": "[ok] {name} stored in the workspace.",
+      "load_failed": "[warn] Failed to load dataset: {error}",
+      "dataset_missing": "[warn] File not found.",
+      "validation_ok": "[ok] Dataset validated.",
+      "validation_warn": "[warn] Validation reported warnings.",
+      "prep_running": "Running educational prep...",
+      "prep_ok": "[ok] {name} generated.",
+      "prep_failed": "[warn] Could not prepare the data.",
+      "need_dataset": "Upload or pick a dataset first.",
+      "extract_failed": "Could not build the curves: {error}",
+      "need_collapse": "Run the MSC collapse before linearising.",
+      "export_hint": "Complete the exercises and export to review with your team.",
+      "sim_theta": "θ computed with Ea = {ea:.1f} kJ/mol.",
+      "sim_collapse": "MSC collapse using θ normalisation.",
+      "sim_blaine": "Blaine linearisation and n estimate.",
+      "exercise_title": "Answered exercises",
+      "export_running": "Building educational material...",
+      "export_ok": "[ok] {name} created.",
+      "pdf_missing": "ReportLab not installed — export HTML or install the [pdf] extra."
+    }
   }
 }

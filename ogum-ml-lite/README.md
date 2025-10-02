@@ -101,6 +101,14 @@ streamlit run app/streamlit_app.py
 - **Estado**: `app/services/state.py` centraliza `session_state`, workspace e
   registro de artefatos; telemetria opcional (`OGUML_TELEMETRY=0` desliga).
 
+## Fase 17 — Modo Educacional
+
+- **Como ativar**: escolha "Modo Educacional" no menu lateral do Streamlit. O fluxo traz três passos (Carregar Dados → MSC & n → Explorar/Exportar).
+- **Conteúdo incluso**: cards conceituais bilingues (pt/en), simulações interativas de θ(Ea), colapso MSC e linearização de Blaine, além de exercícios com checagem automática.
+- **Export educacional**: gere um HTML estático sempre disponível; se instalar `pip install "ogum-ml[pdf]"`, o botão de PDF usa ReportLab para montar o resumo com gráficos.
+- **Limitações**: focado em treinamento. Usa dataset exemplo se nenhum CSV for enviado e não substitui as abas avançadas para análises completas.
+- **Novos exercícios**: implemente funções em `app/edu/exercises.py` retornando `Exercise(key, statement_md, inputs_spec, evaluate)`. O método `evaluate` deve receber um `Mapping[str, float]` e retornar `{"score": float, "feedback": str}`.
+
 ### Modo guiado (Wizard)
 
 - Disponível no menu lateral como primeira opção (`Modo guiado`).
