@@ -198,6 +198,52 @@ com aviso `[skip]`.
   diretórios individuais `workspace/jobs/<job_id>/` para logs e artefatos.
 - **Agendamento**: use `--at "2025-01-10 12:00"` para agendar execuções
   futuras.
+
+## Fase 13 — Comparador de Execuções
+
+O módulo de comparação facilita auditorias entre execuções do Ogum-ML,
+considerando presets, MSC, segmentos, mecanismo e artefatos de ML.
+
+### CLI dedicada
+
+Compare duas execuções (diretórios ou export ZIP):
+
+```bash
+python -m ogum_lite.cli compare runs \
+  --a artifacts/bench_cls/run_A \
+  --b artifacts/bench_cls/run_B \
+  --outdir artifacts/compare_cls_A_vs_B
+```
+
+Para matrizes (referência × candidatos) com relatórios individuais ref vs
+cada candidato:
+
+```bash
+python -m ogum_lite.cli compare matrix \
+  --ref artifacts/bench_reg/run_ref \
+  --candidates artifacts/bench_reg/run_1 artifacts/bench_reg/run_2 \
+  --outdir artifacts/compare_reg_matrix
+```
+
+Resultados:
+
+- `compare_summary.json` (manifest + deltas consolidados).
+- `report.html` com gráficos inline (base64) e destaques principais.
+- `report.xlsx` (abas Summary, Diff-Presets, Diff-ML, etc.).
+- Para matriz: `ranking.csv` + `matrix.html` e subpastas com relatórios
+  individuais.
+
+> 💡 Boas práticas: mantenha `report.html`/`report.xlsx` ao lado de cada run e
+> use nomes descritivos para `--outdir` (ex.: `compare_cls_2025-01_vs_02`).
+
+### Página Streamlit “Compare Runs”
+
+- Acesse via menu principal após abrir `streamlit run app/streamlit_app.py`.
+- Selecione o modo **Runs** (A × B) ou **Matrix** (referência vs lista).
+- Informe caminhos/diretórios do workspace ou faça upload prévio do ZIP.
+- Clique em **Compare** / **Build matrix** para gerar os relatórios.
+- Baixe os arquivos diretamente pelos botões exibidos na página ou visualize o
+  HTML inline.
 - **Monitoramento unificado**: Streamlit ganha a página "Jobs Monitor" e o
   Gradio recebe a aba "Jobs" para acompanhar execuções, visualizar logs e
   cancelar jobs.

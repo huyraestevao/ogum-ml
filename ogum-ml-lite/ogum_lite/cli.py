@@ -28,6 +28,7 @@ from sklearn.metrics import (
 
 from . import scheduler
 from .arrhenius import arrhenius_lnT_dy_dt_vs_invT, fit_arrhenius_global
+from .compare.cli_compare import build_compare_parser
 from .exporters import export_onnx, export_xlsx
 from .features import arrhenius_feature_table, build_feature_store, build_feature_table
 from .io_mapping import (
@@ -1736,6 +1737,9 @@ def cmd_jobs_cancel(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ogum ML Lite CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    parser_compare = subparsers.add_parser("compare", help="Comparador de execuções")
+    build_compare_parser(parser_compare)
 
     parser_jobs = subparsers.add_parser("jobs", help="Scheduler e monitor de jobs")
     parser_jobs.add_argument(
