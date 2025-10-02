@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 import zipfile
 from dataclasses import asdict, replace
@@ -37,6 +38,7 @@ from .io_mapping import (
 )
 from .maps import prepare_segment_heatmap, render_segment_heatmap
 from .mechanism import detect_mechanism_change
+from .ml_experiments import compare_models, list_available_models, run_benchmark_matrix
 from .ml_hooks import (
     compute_permutation_importance,
     filter_features_by_importance,
@@ -159,6 +161,48 @@ def parse_thresholds(raw: str | None) -> Sequence[float]:
     return tuple(values)
 
 
+def parse_targets(raw: str) -> list[str]:
+    """Parse target column names from CLI input."""
+
+    targets = [piece.strip() for piece in raw.split(",") if piece.strip()]
+    if not targets:
+        raise argparse.ArgumentTypeError("Provide at least one target column")
+    return targets
+
+
+def parse_feature_sets(definitions: Sequence[str]) -> dict[str, list[str]]:
+    """Parse feature set definitions like ``basic="f1,f2"``."""
+
+    result: dict[str, list[str]] = {}
+    for item in definitions:
+        if "=" not in item:
+            raise argparse.ArgumentTypeError(
+                f"Invalid feature set '{item}'. Use alias=col1,col2"
+            )
+        alias, cols = item.split("=", 1)
+        alias = alias.strip()
+        if not alias:
+            raise argparse.ArgumentTypeError("Feature set alias cannot be empty")
+        columns = [col.strip() for col in cols.split(",") if col.strip()]
+        if not columns:
+            raise argparse.ArgumentTypeError(
+                f"Feature set '{alias}' must include at least one column"
+            )
+        result[alias] = columns
+    if not result:
+        raise argparse.ArgumentTypeError("Provide at least one feature set definition")
+    return result
+
+
+def parse_model_aliases(raw: str | None) -> list[str] | None:
+    """Parse a comma separated list of model aliases."""
+
+    if raw is None:
+        return None
+    models = [piece.strip() for piece in raw.split(",") if piece.strip()]
+    return models or None
+
+
 def resolve_stage_segments(
     dataframe: pd.DataFrame,
     *,
@@ -185,7 +229,8 @@ def resolve_stage_segments(
         )
         if not bounds:
             raise ValueError(
-                "Unable to derive max-rate bounds. Provide cleaner data or adjust min_size."
+                "Unable to derive max-rate bounds. Provide cleaner data or "
+                "adjust min_size."
             )
         return bounds
     raise ValueError("segmentation_mode must be 'fixed' or 'max-rate'")
@@ -208,7 +253,10 @@ def _edit_mapping(mapping: ColumnMap, df: pd.DataFrame) -> ColumnMap:
     print("Available columns:")
     print("  " + ", ".join(columns))
     print("Technique options: " + ", ".join(TECHNIQUE_CHOICES))
-    print("Text fields: composition_default, technique_default, tech_comment, user, timestamp")
+    print(
+        "Text fields: composition_default, technique_default, tech_comment, "
+        "user, timestamp"
+    )
 
     while True:
         try:
@@ -393,37 +441,42 @@ def cmd_ml_features(args: argparse.Namespace) -> None:
 def cmd_io_map(args: argparse.Namespace) -> None:
     df = read_table(str(args.input))
 
-    if args.default_technique and args.default_technique not in TECHNIQUE_CHOICES:
+    default_composition = getattr(args, "default_composition", None)
+    default_technique = getattr(args, "default_technique", None)
+    tech_comment = getattr(args, "tech_comment", None)
+    user = getattr(args, "user", None)
+    timestamp = getattr(args, "timestamp", None)
+
+    if default_technique and default_technique not in TECHNIQUE_CHOICES:
         raise SystemExit(
             "--default-technique must be one of: " + ", ".join(TECHNIQUE_CHOICES)
         )
 
-    timestamp = args.timestamp
-    if args.user and timestamp is None:
+    if user and timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
 
     mapping = infer_mapping(
         df,
-        default_composition=args.default_composition,
-        default_technique=args.default_technique,
-        tech_comment=args.tech_comment,
-        user=args.user,
+        default_composition=default_composition,
+        default_technique=default_technique,
+        tech_comment=tech_comment,
+        user=user,
         timestamp=timestamp,
     )
     if args.edit:
         mapping = _edit_mapping(mapping, df)
 
     updates: dict[str, object] = {}
-    if args.tech_comment is not None:
-        updates["tech_comment"] = args.tech_comment
-    if args.user is not None:
-        updates["user"] = args.user
+    if tech_comment is not None:
+        updates["tech_comment"] = tech_comment
+    if user is not None:
+        updates["user"] = user
     if timestamp is not None:
         updates["timestamp"] = timestamp
-    if args.default_composition is not None:
-        updates.setdefault("composition_default", args.default_composition)
-    if args.default_technique is not None:
-        updates.setdefault("technique_default", args.default_technique)
+    if default_composition is not None:
+        updates.setdefault("composition_default", default_composition)
+    if default_technique is not None:
+        updates.setdefault("technique_default", default_technique)
     if updates:
         mapping = replace(mapping, **updates)
 
@@ -911,6 +964,67 @@ def cmd_ml_report(args: argparse.Namespace) -> None:
     print(f"HTML report saved to {report_path}")
 
 
+def cmd_ml_bench(args: argparse.Namespace) -> None:
+    dataframe = pd.read_csv(args.table)
+    try:
+        feature_sets = parse_feature_sets(args.feature_sets)
+        targets = parse_targets(args.targets)
+    except argparse.ArgumentTypeError as exc:
+        raise SystemExit(str(exc)) from exc
+    models = parse_model_aliases(args.models)
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    available = list_available_models(args.task)
+    if models is not None:
+        for alias in models:
+            if alias not in available:
+                print(f"[skip] modelo '{alias}' indisponível (dependência ausente)")
+
+    results = run_benchmark_matrix(
+        df_features=dataframe,
+        task=args.task,
+        targets=targets,
+        feature_sets=feature_sets,
+        models=models,
+        group_col=args.group_col,
+        base_outdir=outdir,
+    )
+
+    bench_csv = outdir / "bench_results.csv"
+    completed = sum(
+        not json.loads(raw).get("skipped", False) for raw in results["metrics_json"]
+    )
+    print(
+        "Benchmark finished: "
+        f"{completed} completed / {len(results)} total. Results saved to {bench_csv}"
+    )
+
+
+def cmd_ml_compare(args: argparse.Namespace) -> None:
+    bench_csv = Path(args.bench_csv)
+    outdir = Path(args.outdir)
+    if not bench_csv.exists():
+        raise SystemExit(f"Benchmark CSV not found: {bench_csv}")
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    summary = compare_models(bench_csv, args.task)
+    summary_path = bench_csv.parent / "bench_summary.csv"
+    ranking_path = bench_csv.parent / "ranking.png"
+
+    if bench_csv.parent != outdir:
+        target_summary = outdir / "bench_summary.csv"
+        target_ranking = outdir / "ranking.png"
+        shutil.copy2(summary_path, target_summary)
+        shutil.copy2(ranking_path, target_ranking)
+        summary_path = target_summary
+        ranking_path = target_ranking
+
+    print(summary.to_string(index=False))
+    print(f"Summary saved to {summary_path}")
+    print(f"Ranking plot saved to {ranking_path}")
+
+
 def cmd_theta(args: argparse.Namespace) -> None:
     ogum = OgumLite()
     ogum.load_csv(args.input)
@@ -988,9 +1102,7 @@ def cmd_msc(args: argparse.Namespace) -> None:
             raise SystemExit("Summary does not contain the selected metric")
         best_idx = summary[metric_key].idxmin()
         best_ea = summary.loc[best_idx, "Ea_kJ_mol"]
-        print(
-            f"[auto-ea] Suggested Ea ({metric_key}) = {best_ea:.3f} kJ/mol"
-        )
+        print(f"[auto-ea] Suggested Ea ({metric_key}) = {best_ea:.3f} kJ/mol")
         if args.auto_ea_plot:
             fig, ax = plt.subplots()
             ax.plot(summary["Ea_kJ_mol"], summary["mse_global"], label="MSE global")
@@ -1245,9 +1357,7 @@ def launch_ui() -> None:
                     enriched[f"tech_{key}"] = str(value)
                 mapping = replace(mapping, extra_metadata=enriched)
 
-        mapping = ColumnMap(
-            **asdict(mapping)
-        )
+        mapping = ColumnMap(**asdict(mapping))
         mapped = apply_mapping(dataframe, mapping)
         response = convert_response(mapped, column="rho_rel")
         mapped["rho_rel"] = response
@@ -2333,6 +2443,74 @@ def build_parser() -> argparse.ArgumentParser:
         help="Observações adicionais para o relatório.",
     )
     parser_ml_report.set_defaults(func=cmd_ml_report)
+
+    parser_ml_bench = ml_subparsers.add_parser(
+        "bench",
+        help="Executar matriz de benchmarks com GroupKFold",
+    )
+    parser_ml_bench.add_argument(
+        "--table",
+        type=Path,
+        required=True,
+        help="CSV com as features consolidadas.",
+    )
+    parser_ml_bench.add_argument(
+        "--task",
+        choices=["cls", "reg"],
+        required=True,
+        help="Tipo de tarefa: cls (classificação) ou reg (regressão).",
+    )
+    parser_ml_bench.add_argument(
+        "--targets",
+        required=True,
+        help="Colunas alvo (separadas por vírgula).",
+    )
+    parser_ml_bench.add_argument(
+        "--feature-sets",
+        nargs="+",
+        required=True,
+        help="Mapeamentos alias=col1,col2 para conjuntos de features.",
+    )
+    parser_ml_bench.add_argument(
+        "--models",
+        help="Lista de modelos (rf,lgbm,cat,xgb).",
+    )
+    parser_ml_bench.add_argument(
+        "--group-col",
+        required=True,
+        help="Coluna de agrupamento (GroupKFold).",
+    )
+    parser_ml_bench.add_argument(
+        "--outdir",
+        type=Path,
+        required=True,
+        help="Diretório base para salvar artefatos e bench_results.csv.",
+    )
+    parser_ml_bench.set_defaults(func=cmd_ml_bench)
+
+    parser_ml_compare = ml_subparsers.add_parser(
+        "compare",
+        help="Gerar ranking e resumo de benchmarks",
+    )
+    parser_ml_compare.add_argument(
+        "--bench-csv",
+        type=Path,
+        required=True,
+        help="Caminho para o bench_results.csv consolidado.",
+    )
+    parser_ml_compare.add_argument(
+        "--task",
+        choices=["cls", "reg"],
+        required=True,
+        help="Tipo de tarefa avaliada no benchmark.",
+    )
+    parser_ml_compare.add_argument(
+        "--outdir",
+        type=Path,
+        required=True,
+        help="Diretório onde bench_summary.csv e ranking.png serão salvos.",
+    )
+    parser_ml_compare.set_defaults(func=cmd_ml_compare)
 
     parser_theta = subparsers.add_parser("theta", help="Compute θ(Ea) table")
     parser_theta.add_argument(

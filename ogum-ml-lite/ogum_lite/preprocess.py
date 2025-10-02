@@ -100,9 +100,15 @@ def convert_response(
             raise ValueError("--L0 must be provided with a positive value for ΔL data")
         converted = series / float(L0)
     elif inferred_type == "density":
-        if rho0 is None or rho0 <= 0:
-            raise ValueError("--rho0 must be provided with a positive value for density data")
-        ratio = series / float(rho0)
+        if rho0 is None:
+            reference = 1.0
+        elif rho0 <= 0:
+            raise ValueError(
+                "--rho0 must be provided with a positive value for density data"
+            )
+        else:
+            reference = float(rho0)
+        ratio = series / reference
         ratio = ratio.clip(lower=1e-12)
         converted = 1.0 - np.cbrt(ratio)
     else:  # pragma: no cover - defensive guard

@@ -225,7 +225,8 @@ def segment_fixed(
 def _smooth_max_rate(signal: np.ndarray, window: int = 7) -> np.ndarray:
     if signal.size < 3:
         return signal
-    window = max(3, min(int(window), int(signal.size) if signal.size % 2 == 1 else int(signal.size) - 1))
+    max_window = int(signal.size) if signal.size % 2 == 1 else int(signal.size) - 1
+    window = max(3, min(int(window), max_window))
     if window % 2 == 0:
         window += 1
     if window >= signal.size:

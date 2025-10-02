@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,158 @@ def make_regressor(
         )
     else:  # pragma: no cover - future algorithms
         raise ValueError(f"Unsupported regressor algorithm: {algo}")
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def _warn_missing_dependency(model_name: str) -> None:
+    warnings.warn(
+        f"modelo {model_name} indisponível (dependência ausente)",
+        stacklevel=2,
+    )
+
+
+def make_lgbm_classifier(
+    num_cols: Sequence[str],
+    cat_cols: Sequence[str],
+    **kwargs,
+) -> Pipeline | None:
+    """Build a LightGBM classification pipeline.
+
+    Parameters
+    ----------
+    num_cols, cat_cols
+        Feature column names split by data type.
+    **kwargs
+        Extra keyword arguments forwarded to ``lightgbm.LGBMClassifier``.
+
+    Returns
+    -------
+    Pipeline or None
+        Configured pipeline when LightGBM is available, otherwise ``None``.
+    """
+
+    try:
+        from lightgbm import LGBMClassifier
+    except ModuleNotFoundError:
+        _warn_missing_dependency("lgbm")
+        return None
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+    estimator = LGBMClassifier(n_estimators=400, random_state=42, **kwargs)
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def make_lgbm_regressor(
+    num_cols: Sequence[str],
+    cat_cols: Sequence[str],
+    **kwargs,
+) -> Pipeline | None:
+    """Build a LightGBM regression pipeline."""
+
+    try:
+        from lightgbm import LGBMRegressor
+    except ModuleNotFoundError:
+        _warn_missing_dependency("lgbm")
+        return None
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+    estimator = LGBMRegressor(n_estimators=400, random_state=42, **kwargs)
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def make_cat_classifier(
+    num_cols: Sequence[str],
+    cat_cols: Sequence[str],
+    **kwargs,
+) -> Pipeline | None:
+    """Build a CatBoost classification pipeline."""
+
+    try:
+        from catboost import CatBoostClassifier
+    except ModuleNotFoundError:
+        _warn_missing_dependency("cat")
+        return None
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+    estimator = CatBoostClassifier(
+        n_estimators=400,
+        random_seed=42,
+        verbose=False,
+        **kwargs,
+    )
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def make_cat_regressor(
+    num_cols: Sequence[str],
+    cat_cols: Sequence[str],
+    **kwargs,
+) -> Pipeline | None:
+    """Build a CatBoost regression pipeline."""
+
+    try:
+        from catboost import CatBoostRegressor
+    except ModuleNotFoundError:
+        _warn_missing_dependency("cat")
+        return None
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+    estimator = CatBoostRegressor(
+        n_estimators=400,
+        random_seed=42,
+        verbose=False,
+        **kwargs,
+    )
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def make_xgb_classifier(
+    num_cols: Sequence[str],
+    cat_cols: Sequence[str],
+    **kwargs,
+) -> Pipeline | None:
+    """Build an XGBoost classification pipeline."""
+
+    try:
+        from xgboost import XGBClassifier
+    except ModuleNotFoundError:
+        _warn_missing_dependency("xgb")
+        return None
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+    estimator = XGBClassifier(
+        n_estimators=400,
+        random_state=42,
+        objective="multi:softprob",
+        eval_metric="mlogloss",
+        tree_method="hist",
+        use_label_encoder=False,
+        **kwargs,
+    )
+    return Pipeline([("preprocess", preprocessor), ("model", estimator)])
+
+
+def make_xgb_regressor(
+    num_cols: Sequence[str],
+    cat_cols: Sequence[str],
+    **kwargs,
+) -> Pipeline | None:
+    """Build an XGBoost regression pipeline."""
+
+    try:
+        from xgboost import XGBRegressor
+    except ModuleNotFoundError:
+        _warn_missing_dependency("xgb")
+        return None
+
+    preprocessor = build_preprocessor(num_cols, cat_cols)
+    estimator = XGBRegressor(
+        n_estimators=400,
+        random_state=42,
+        objective="reg:squarederror",
+        tree_method="hist",
+        **kwargs,
+    )
     return Pipeline([("preprocess", preprocessor), ("model", estimator)])
 
 
