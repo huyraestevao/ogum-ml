@@ -6,6 +6,7 @@ from typing import Callable
 
 import streamlit as st
 
+from app import page_edu
 from app.design.ab_variants import EXPERIMENTS
 from app.design.layout import render_shell
 from app.i18n.translate import I18N
@@ -23,6 +24,7 @@ from app.pages import (
 from app.services import ab, state, telemetry
 
 PAGES: dict[str, tuple[str, Callable[[I18N], None]]] = {
+    "edu": ("menu.edu", page_edu.render),
     "wizard": ("menu.wizard", page_wizard.render),
     "prep": ("menu.prep", page_prep.render),
     "features": ("menu.features", page_features.render),

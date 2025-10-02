@@ -12,7 +12,8 @@
     "mechanism": "Mecanismo",
     "ml": "Modelos ML",
     "export": "Exportar",
-    "jobs": "Jobs Monitor"
+    "jobs": "Jobs Monitor",
+    "edu": "Modo Educacional"
   },
   "workspace": {
     "title": "Workspace",
@@ -149,5 +150,81 @@
     "describe_segments": "Segmentos: tabela com frações por estágio.",
     "describe_mechanism": "Mecanismo: relatório com τ, R² e limiares detectados.",
     "describe_ml": "ML: métricas de validação cruzada por modelo."
+  }
+  ,
+  "edu": {
+    "title": "Modo Educacional",
+    "intro": "Aprenda os fundamentos de θ, MSC e n com visualizações, exercícios guiados e export educacional. Learn the essentials with guided microcopy.",
+    "steps": {
+      "load": {
+        "title": "1. Carregar Dados",
+        "hint": "Envie um CSV longo ou use o exemplo para praticar. Upload your dataset to start."
+      },
+      "simulate": {
+        "title": "2. θ, MSC & n",
+        "hint": "Explore os sliders e gráficos para ajustar Ea, colapso MSC e linearização de Blaine."
+      },
+      "explore": {
+        "title": "3. Explorar & Exportar",
+        "hint": "Resolva os exercícios, revise os resultados e exporte um resumo educacional."
+      }
+    },
+    "labels": {
+      "upload": "Enviar CSV longo / Upload CSV",
+      "dataset_select": "Selecionar dataset",
+      "ea_slider": "Ea (kJ/mol)",
+      "seg_55": "Θ normalizado @55%",
+      "seg_70": "Θ normalizado @70%",
+      "seg_90": "Θ normalizado @90%"
+    },
+    "actions": {
+      "validate": "Validar",
+      "prepare": "Preparar",
+      "compute_theta": "Calcular θ",
+      "collapse_msc": "Colapsar MSC",
+      "linearize_blaine": "Linearizar Blaine",
+      "check": "Checar resposta",
+      "export_html": "Exportar HTML Educacional",
+      "export_pdf": "Exportar PDF Educacional",
+      "open_advanced": "Abrir modo avançado"
+    },
+    "cards": {
+      "theta": {
+        "title": "Por que normalizar o tempo?",
+        "body": "O tempo θ acumula o efeito térmico via integral de Arrhenius, permitindo comparar ciclos diferentes. Theta condenses temperature/time into a comparable scale.",
+        "formula": "\\Theta(t) = \\int_0^t e^{{-E_a/(R T(\\tau))}} d\\tau"
+      },
+      "blaine": {
+        "title": "Linearização de Blaine",
+        "body": "Supondo y = k \\Theta^n, tomar ln transforma em linha reta: ln(y) = ln(k) + n ln(\\Theta). Ajuste linear revela o expoente n.",
+        "formula": "\\ln(y) = \\ln(k) + n\\,\\ln(\\Theta)"
+      }
+    },
+    "captions": {
+      "theta": "θ acompanha o ciclo térmico acumulado.",
+      "collapse": "Curvas colapsadas via θ normalizado.",
+      "blaine": "Linearização ln(θ) × ln(y) e ajuste de n."
+    },
+    "messages": {
+      "upload_success": "[ok] {name} salvo no workspace.",
+      "load_failed": "[warn] Falha ao carregar dataset: {error}",
+      "dataset_missing": "[warn] Arquivo não encontrado.",
+      "validation_ok": "[ok] Dataset válido.",
+      "validation_warn": "[warn] Validação encontrou avisos.",
+      "prep_running": "Executando preparação educacional...",
+      "prep_ok": "[ok] {name} gerado.",
+      "prep_failed": "[warn] Não foi possível preparar os dados.",
+      "need_dataset": "Envie ou selecione um dataset para continuar.",
+      "extract_failed": "Não foi possível montar as curvas: {error}",
+      "need_collapse": "Calcule o colapso MSC antes de linearizar.",
+      "export_hint": "Preencha os exercícios e exporte para revisar com a equipe.",
+      "sim_theta": "θ calculado com Ea = {ea:.1f} kJ/mol.",
+      "sim_collapse": "Colapso MSC com normalização por θ.",
+      "sim_blaine": "Linearização de Blaine com ajuste de n.",
+      "exercise_title": "Exercícios respondidos",
+      "export_running": "Gerando material educacional...",
+      "export_ok": "[ok] {name} criado.",
+      "pdf_missing": "ReportLab não instalado — gere HTML ou instale a dependência [pdf]."
+    }
   }
 }
