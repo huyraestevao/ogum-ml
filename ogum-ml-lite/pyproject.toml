@@ -3,12 +3,19 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ogum-ml-lite"
-version = "0.1.0"
-description = "Colab-friendly Ogum sintering toolkit"
+name = "ogum-ml"
+version = "1.0.0"
+description = "Official Ogum-ML toolkit for master sintering curves, ML benchmarking and simulation"
 authors = [{name = "Ogum ML Team"}]
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "MIT"}
+keywords = [
+    "materials-science",
+    "sintering",
+    "master-sintering-curve",
+    "machine-learning",
+]
 dependencies = [
     "numpy",
     "pandas",
@@ -34,16 +41,24 @@ dependencies = [
 ]
 
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
 [project.urls]
 Homepage = "https://github.com/huyraestevao/ogum-ml"
 Repository = "https://github.com/huyraestevao/ogum-ml"
 Issues = "https://github.com/huyraestevao/ogum-ml/issues"
+Documentation = "https://huyraestevao.github.io/ogum-ml/"
+
+[project.scripts]
+ogum-ml = "ogum_lite.cli:main"
 
 [project.optional-dependencies]
 dev = [

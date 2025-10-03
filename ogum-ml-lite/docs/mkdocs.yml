@@ -1,0 +1,41 @@
+site_name: Ogum-ML Documentation
+site_url: https://huyraestevao.github.io/ogum-ml/
+repo_url: https://github.com/huyraestevao/ogum-ml
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep orange
+    - scheme: slate
+      primary: blue grey
+      accent: orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+nav:
+  - Home: index.md
+  - Tutorials:
+      - "01 — Import & MSC": tutorials/01_msc.ipynb
+      - "02 — Segmentation": tutorials/02_segmentation.ipynb
+      - "03 — Machine learning": tutorials/03_ml.ipynb
+      - "04 — Comparison": tutorials/04_compare.ipynb
+      - "05 — Simulation": tutorials/05_sim.ipynb
+  - User guide: user_guide.md
+  - API reference:
+      - Overview: api_reference/overview.md
+  - Contributor guide: contributor_guide.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+  - mkdocs-jupyter
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
