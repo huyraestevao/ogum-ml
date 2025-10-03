@@ -1,0 +1,25 @@
+FROM python:3.11-slim AS base
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    OGUML_WORKDIR=/opt/ogum
+
+WORKDIR ${OGUML_WORKDIR}
+
+COPY ogum-ml-lite ${OGUML_WORKDIR}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential git \
+    && python -m pip install --upgrade pip \
+    && pip install "${OGUML_WORKDIR}[ml,sim,pdf]" \
+    && apt-get purge -y build-essential git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ogum-ml-lite/docker/release_entrypoint.sh /usr/local/bin/ogum-entrypoint
+RUN chmod +x /usr/local/bin/ogum-entrypoint
+
+EXPOSE 8501 8000
+
+ENTRYPOINT ["/usr/local/bin/ogum-entrypoint"]
+CMD ["streamlit"]

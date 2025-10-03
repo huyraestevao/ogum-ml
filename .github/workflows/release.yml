@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  pages: write
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+      - name: Ruff
+        run: ruff check .
+      - name: Black
+        run: black --check .
+      - name: Pytest
+        run: pytest -q
+
+  docs:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install documentation stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+          pip install mkdocs-material mkdocstrings[python] mkdocs-jupyter
+      - name: Build docs
+        working-directory: ogum-ml-lite/docs
+        run: mkdocs build
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: ogum-ml-lite/docs/site
+
+  deploy-docs:
+    runs-on: ubuntu-latest
+    needs: docs
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  package:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build artifacts
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+          python -m build
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.8.11
+        with:
+          packages-dir: dist
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: quality
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          context: .
+          file: Dockerfile.release
+          tags: |
+            huyraestevao/ogum-ml:1.0.0
+            huyraestevao/ogum-ml:latest

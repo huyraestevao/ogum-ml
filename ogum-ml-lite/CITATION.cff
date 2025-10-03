@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+title: Ogum-ML
+message: If you use this software, please cite it as below.
+type: software
+version: 1.0.0
+doi: 10.5281/zenodo.1234567
+authors:
+  - family-names: Ogum
+    given-names: ML Team
+  - family-names: Estevão
+    given-names: Huyra
+repository-code: https://github.com/huyraestevao/ogum-ml
+url: https://huyraestevao.github.io/ogum-ml/
+abstract: |
+  Ogum-ML is a production-ready toolkit for sintering analytics, combining
+  master sintering curves, machine learning benchmarks, simulations and a
+  Streamlit-based frontend. Version 1.0.0 marks the first long-term support
+  release with frozen APIs and automated distribution to PyPI and Docker Hub.
+keywords:
+  - materials science
+  - sintering
+  - machine learning
+  - simulation
+  - master sintering curve
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Ogum
+      given-names: ML Team
+  title: Ogum-ML 1.0 — unified sintering analytics toolkit
+  journal: Zenodo
+  year: 2024
+  doi: 10.5281/zenodo.1234567
