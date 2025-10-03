@@ -1,0 +1,70 @@
+name: Release Check (1.0 readiness)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Upgrade pip stack
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+      - name: Sanity print deps being used
+        run: |
+          echo "PWD: $(pwd)"
+          ls -la
+          echo "----- requirements resolved by CI -----"
+          if [ -f requirements.txt ]; then echo ">>> requirements.txt"; cat requirements.txt; fi
+          if ls requirements/*.txt >/dev/null 2>&1; then for f in requirements/*.txt; do echo ">>> $f"; cat "$f"; done; fi
+          echo "--------------------------------------"
+
+      - name: Install project deps
+        run: |
+          pip install --no-cache-dir -r requirements.txt || pip install -r requirements.txt
+
+      - name: Install dev tools (ruff/black/pytest) if not included
+        run: |
+          python -m pip install --upgrade ruff black pytest
+
+      - name: Run release_check.py
+        run: |
+          python tools/release_check.py
+        continue-on-error: true
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p artifacts
+          cp -f release_check.log artifacts/ 2>/dev/null || true
+          cp -f release_summary.md artifacts/ 2>/dev/null || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-check-artifacts
+          path: artifacts/
+
+      - name: Job Summary
+        if: always()
+        run: |
+          if [ -f release_summary.md ]; then
+            echo "## Ogum-ML — Release 1.0 Readiness" >> $GITHUB_STEP_SUMMARY
+            cat release_summary.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No summary file found." >> $GITHUB_STEP_SUMMARY
+          fi
