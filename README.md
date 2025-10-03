@@ -1,5 +1,6 @@
 # Ogum-ML 1.0
 
+[![Release Check](https://github.com/huyraestevao/ogum-ml/actions/workflows/release_check.yml/badge.svg)](https://github.com/huyraestevao/ogum-ml/actions/workflows/release_check.yml)
 [![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://huyraestevao.github.io/ogum-ml/)
 [![PyPI](https://img.shields.io/pypi/v/ogum-ml.svg)](https://pypi.org/project/ogum-ml/)
 [![Docker](https://img.shields.io/docker/pulls/huyraestevao/ogum-ml.svg)](https://hub.docker.com/r/huyraestevao/ogum-ml)
