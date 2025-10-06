@@ -1,1 +1,2 @@
+# Ogum-ML — dependências principais
 -r ogum-ml-lite/requirements.txt

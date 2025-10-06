@@ -33,37 +33,14 @@ jobs:
           echo "--------------------------------------"
 
       - name: Install project deps
-        shell: bash
         run: |
-          set -euo pipefail
-          echo "PWD: $(pwd)"
-          echo "Árvore (nível 2):"
-          find . -maxdepth 2 -type f -name "requirements*.txt" -print || true
-          echo "---- Conteúdo dos candidates ----"
-          if [ -f requirements.txt ]; then
-            echo ">>> requirements.txt"
-            cat requirements.txt
-          fi
-          if [ -f ogum-ml-lite/requirements.txt ]; then
-            echo ">>> ogum-ml-lite/requirements.txt"
-            cat ogum-ml-lite/requirements.txt
-          fi
-          echo "---------------------------------"
-
-          # Escolha do arquivo
-          REQUIREMENTS=""
-          if [ -f requirements.txt ]; then
-            REQUIREMENTS="requirements.txt"
-          elif [ -f ogum-ml-lite/requirements.txt ]; then
-            REQUIREMENTS="ogum-ml-lite/requirements.txt"
-          else
-            echo "❌ Nenhum requirements.txt encontrado (raiz ou ogum-ml-lite/)."
-            exit 2
-          fi
-
-          echo "Usando arquivo: $REQUIREMENTS"
+          echo "=== Detectando arquivo requirements ==="
+          ls -la
+          echo "=== Conteúdo de requirements.txt ==="
+          cat requirements.txt || echo "⚠️ Arquivo não encontrado"
+          echo "=== Instalando dependências ==="
           python -m pip install --upgrade pip setuptools wheel
-          pip install --no-cache-dir -r "$REQUIREMENTS"
+          pip install --no-cache-dir -r requirements.txt
 
       - name: Sanity — verificar pins legados
         run: |
